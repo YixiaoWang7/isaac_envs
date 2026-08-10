@@ -1,0 +1,14 @@
+__pycache__/
+*.py[cod]
+*.orig
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+build/
+dist/
+logs/
+# Generated videos, previews, and evaluation reports must stay local.
+outputs/
+datasets/
+assets/downloaded/*
+!assets/downloaded/.gitkeep

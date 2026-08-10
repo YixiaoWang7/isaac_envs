@@ -1,0 +1,51 @@
+#usda 1.0
+(
+    defaultPrim = "TakeawayBox"
+    metersPerUnit = 1
+    upAxis = "Z"
+)
+def Xform "TakeawayBox" (prepend apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsMassAPI"])
+{
+    bool physics:rigidBodyEnabled = 1
+    float physics:mass = 0.22
+    def Cube "Base" (prepend apiSchemas = ["PhysicsCollisionAPI"])
+    {
+        double size = 1
+        color3f[] primvars:displayColor = [(0.82, 0.72, 0.52)]
+        float3 xformOp:scale = (0.14, 0.11, 0.008)
+        double3 xformOp:translate = (0, 0, 0.004)
+        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+    }
+    def Cube "Front" (prepend apiSchemas = ["PhysicsCollisionAPI"])
+    {
+        double size = 1
+        color3f[] primvars:displayColor = [(0.82, 0.72, 0.52)]
+        float3 xformOp:scale = (0.14, 0.008, 0.065)
+        double3 xformOp:translate = (0, -0.051, 0.036)
+        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+    }
+    def Cube "Back" (prepend apiSchemas = ["PhysicsCollisionAPI"])
+    {
+        double size = 1
+        color3f[] primvars:displayColor = [(0.82, 0.72, 0.52)]
+        float3 xformOp:scale = (0.14, 0.008, 0.065)
+        double3 xformOp:translate = (0, 0.051, 0.036)
+        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+    }
+    def Cube "Left" (prepend apiSchemas = ["PhysicsCollisionAPI"])
+    {
+        double size = 1
+        color3f[] primvars:displayColor = [(0.82, 0.72, 0.52)]
+        float3 xformOp:scale = (0.008, 0.094, 0.065)
+        double3 xformOp:translate = (-0.066, 0, 0.036)
+        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+    }
+    def Cube "Right" (prepend apiSchemas = ["PhysicsCollisionAPI"])
+    {
+        double size = 1
+        color3f[] primvars:displayColor = [(0.82, 0.72, 0.52)]
+        float3 xformOp:scale = (0.008, 0.094, 0.065)
+        double3 xformOp:translate = (0.066, 0, 0.036)
+        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+    }
+}

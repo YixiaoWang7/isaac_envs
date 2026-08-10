@@ -1,0 +1,16 @@
+{
+  "asset_release": "Isaac/5.1",
+  "license": "https://www.nvidia.com/en-us/agreements/enterprise-software/isaac-sim-additional-software-and-materials-license/",
+  "files": {
+    "mug.usd": {
+      "source": "https://omniverse-content-production.s3-us-west-2.amazonaws.com/Assets/Isaac/5.1/Isaac/IsaacLab/Objects/Mug/mug.usd",
+      "bytes": 26307048,
+      "sha256": "7e71c247626c8bd17aa27dd7ad8aac1205cae7e9fc8a40fc911e0caf4f76ec80"
+    },
+    "sorting_bowl_yellow.usd": {
+      "source": "https://omniverse-content-production.s3-us-west-2.amazonaws.com/Assets/Isaac/5.1/Isaac/IsaacLab/Mimic/nut_pour_task/nut_pour_assets/sorting_bowl_yellow.usd",
+      "bytes": 91055,
+      "sha256": "defa74e53aad93d6394bb857baa64c4d682f803753357e6f1f9e43352b3e288c"
+    }
+  }
+}

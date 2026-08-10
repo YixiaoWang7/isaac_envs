@@ -1,0 +1,12 @@
+version: 1
+assets:
+  mug:
+    nucleus_path: Objects/Mug/mug.usd
+    root: ISAACLAB_NUCLEUS_DIR
+    optional_visual_only: true
+  bowl:
+    nucleus_path: Mimic/nut_pour_task/nut_pour_assets/sorting_bowl_yellow.usd
+    root: ISAACLAB_NUCLEUS_DIR
+    optional_visual_only: true
+generated_physics_assets: [mug, bowl, tray, takeaway_box, spoon]
+

@@ -1,0 +1,19 @@
+[package]
+version = "0.1.0"
+category = "isaaclab"
+readme = "README.md"
+title = "CG Desk Service Environments"
+author = "Yixiao Wang"
+maintainer = "Yixiao Wang"
+description = "Prompt-conditioned long-horizon desk-service manipulation environments."
+repository = ""
+keywords = ["isaaclab", "manipulation", "compositional-generalization"]
+
+[dependencies]
+"isaaclab" = {}
+"isaaclab_assets" = {}
+"isaaclab_tasks" = {}
+
+[[python.module]]
+name = "cg_isaac_envs"
+

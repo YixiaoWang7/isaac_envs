@@ -1,0 +1,52 @@
+#usda 1.0
+(
+    defaultPrim = "Bowl"
+    metersPerUnit = 1
+    upAxis = "Z"
+)
+def Xform "Bowl" (prepend apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsMassAPI"])
+{
+    bool physics:rigidBodyEnabled = 1
+    float physics:mass = 0.14
+    def Cube "Base" (prepend apiSchemas = ["PhysicsCollisionAPI"])
+    {
+        double size = 1
+        color3f[] primvars:displayColor = [(0.95, 0.68, 0.12)]
+        float3 xformOp:scale = (0.105, 0.105, 0.008)
+        double3 xformOp:translate = (0, 0, 0.004)
+        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+    }
+    def Cube "Front" (prepend apiSchemas = ["PhysicsCollisionAPI"])
+    {
+        double size = 1
+        color3f[] primvars:displayColor = [(0.95, 0.68, 0.12)]
+        float3 xformOp:scale = (0.105, 0.007, 0.052)
+        double3 xformOp:translate = (0, -0.049, 0.030)
+        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+    }
+    def Cube "Back" (prepend apiSchemas = ["PhysicsCollisionAPI"])
+    {
+        double size = 1
+        color3f[] primvars:displayColor = [(0.95, 0.68, 0.12)]
+        float3 xformOp:scale = (0.105, 0.007, 0.052)
+        double3 xformOp:translate = (0, 0.049, 0.030)
+        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+    }
+    def Cube "Left" (prepend apiSchemas = ["PhysicsCollisionAPI"])
+    {
+        double size = 1
+        color3f[] primvars:displayColor = [(0.95, 0.68, 0.12)]
+        float3 xformOp:scale = (0.007, 0.091, 0.052)
+        double3 xformOp:translate = (-0.049, 0, 0.030)
+        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+    }
+    def Cube "Right" (prepend apiSchemas = ["PhysicsCollisionAPI"])
+    {
+        double size = 1
+        color3f[] primvars:displayColor = [(0.95, 0.68, 0.12)]
+        float3 xformOp:scale = (0.007, 0.091, 0.052)
+        double3 xformOp:translate = (0.049, 0, 0.030)
+        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+    }
+}
+

@@ -1,0 +1,8 @@
+catalog_version: 1
+split_rule: deterministic_parity
+splits:
+  all: all task IDs
+  orthogonal_train: tasks whose stable factor-code parity is even
+  ood_recombination: remaining tasks
+  id_eval: same semantic tasks as orthogonal_train with alternate prompt wording
+

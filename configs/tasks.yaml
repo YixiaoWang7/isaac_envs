@@ -1,0 +1,26 @@
+# Human-readable description of the generated task catalog.
+# The authoritative enumeration is cg_isaac_envs.tasks.desk_service.task_catalog.
+catalog_version: 1
+families:
+  tea:
+    factors:
+      sweetener: [none, sugar]
+      spoon: [false, true]
+      destination: [left, right]
+  candy:
+    factors:
+      candies: [red, blue, both]
+      napkin: [false, true]
+      destination: [left, right]
+    valid_containers: [mug, bowl]
+  combo:
+    factors:
+      sweetener: [none, sugar]
+      candy: [red, blue]
+      destination: [left, right]
+  takeaway:
+    factors:
+      candy: [red, blue]
+      cookie: [false, true]
+      destination: [left, right]
+
