@@ -1,9 +1,14 @@
-from cg_isaac_envs.tasks.household.task_catalog import CATALOG, MUG_LABELS, OBJECT_NAMES, STAGE_1, STAGE_2, STAGE_3, STATION_LABELS, TASK_BY_CODE, split_task_ids, tokenize_prompt
+from cg_isaac_envs.tasks.household.task_catalog import CATALOG, MUG_LABELS, OBJECT_NAMES, ORTHOGONAL9_CODES, STAGE_1, STAGE_2, STAGE_3, STATION_LABELS, TASK_BY_CODE, split_task_ids, task_ids_for_set, tokenize_prompt
 
 def test_catalog_is_complete_3x3x3():
     assert len(CATALOG)==27
     assert len(TASK_BY_CODE)==27
     assert {task.code for task in CATALOG}=={(a,b,c) for a in STAGE_1 for b in STAGE_2 for c in STAGE_3}
+
+def test_orthogonal_task_set_matches_oa9_design():
+    assert ORTHOGONAL9_CODES==((1,1,1),(1,2,2),(1,3,3),(2,1,2),(2,2,3),(2,3,1),(3,1,3),(3,2,1),(3,3,2))
+    assert task_ids_for_set("orthogonal")==tuple(TASK_BY_CODE[code].task_id for code in ORTHOGONAL9_CODES)
+    assert task_ids_for_set("orthogonal")== (0,4,8,10,14,15,20,21,25)
 
 def test_all_combinations_have_daily_semantics():
     assert {t.selected_object for t in CATALOG}=={"red_candy","blue_candy","green_candy"}
@@ -25,10 +30,10 @@ def test_splits_are_disjoint_and_complete():
     assert not train & ood
     assert train | ood==set(range(27))
 
-def test_hot_tasks_require_handle_lift_only():
+def test_final_state_has_exactly_inside_and_on_relations():
     for task in CATALOG:
         relations={goal.relation for goal in task.alternatives[0]}
-        assert ("handle_lift" in relations)==(task.destination=="hot_serving_place")
+        assert relations=={"inside", "on"}
 
 def test_prompts_use_short_visual_labels():
     for task in CATALOG:

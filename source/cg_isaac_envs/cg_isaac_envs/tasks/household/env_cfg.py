@@ -251,7 +251,7 @@ class RewardsCfg:
 
 @configclass
 class TerminationsCfg:
-    success = DoneTerm(func=mdp.StableTaskSuccess, params={"consecutive_steps": 10, "max_speed": 0.08})
+    success = DoneTerm(func=mdp.StableTaskSuccess, params={"consecutive_steps": 30, "minimum_ee_height": 0.20})
     dropped = DoneTerm(func=mdp.required_object_dropped, params={"minimum_height": -0.08})
     time_out = DoneTerm(func=mdp.time_out, time_out=True)
 

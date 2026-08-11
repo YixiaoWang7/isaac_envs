@@ -30,7 +30,16 @@ def test_balanced_scheduler_skips_complete_tasks():
     assert scheduler.accepted == scheduler.target == 6
 
 
-def sample(attempt, stable=False, gripper=1):
+def test_scheduler_finishes_one_task_before_advancing():
+    scheduler = BalancedTaskScheduler([0, 1, 2], {}, quota=2)
+    assert scheduler.next_task() == 0
+    scheduler.mark_success(0)
+    assert scheduler.next_task() == 0
+    scheduler.mark_success(0)
+    assert scheduler.next_task() == 1
+
+
+def sample(attempt, stable=False, gripper=1, released=None, ee_high=None):
     images = {
         camera: np.full((256, 256, 3), channel * 40, dtype=np.uint8)
         for channel, camera in enumerate(("front", "wrist", "side"), start=1)
@@ -42,6 +51,8 @@ def sample(attempt, stable=False, gripper=1):
         ee_delta_pose=np.array([0.01, 0.0, -0.005, 0.0, 0.0, 0.035]),
         gripper_target=gripper,
         task_success=stable,
+        gripper_released=stable if released is None else released,
+        ee_high_enough=stable if ee_high is None else ee_high,
         stable_success=stable,
     )
 
@@ -50,7 +61,7 @@ def test_success_commit_writes_synchronized_hdf5_and_mp4(tmp_path: Path):
     dataset = DemonstrationDataset(tmp_path, TASK_ROWS)
     attempt = dataset.new_attempt(EpisodeMetadata(1, (1, 1, 2), "task one", 0))
     sample(attempt, stable=False, gripper=1)
-    sample(attempt, stable=True, gripper=0)
+    sample(attempt, stable=True, gripper=1)
     assert attempt.commit() == "demo_000000"
     dataset.close()
 
@@ -59,7 +70,9 @@ def test_success_commit_writes_synchronized_hdf5_and_mp4(tmp_path: Path):
         assert episode["obs/ee_pose"].shape == (2, 7)
         assert episode["obs/gripper_width"].shape == (2, 1)
         assert episode["actions/ee_delta_pose"].shape == (2, 6)
-        assert episode["actions/gripper_target"][:, 0].tolist() == [1, 0]
+        assert episode["actions/gripper_target"][:, 0].tolist() == [1, 1]
+        assert episode["signals/gripper_released_after_action"][:, 0].tolist() == [False, True]
+        assert episode["signals/ee_high_enough_after_action"][:, 0].tolist() == [False, True]
         assert episode["signals/stable_success_after_action"][:, 0].tolist() == [False, True]
         assert episode.attrs["task_id"] == 1
         assert stream["data"].attrs["total"] == 2
@@ -91,6 +104,24 @@ def test_discard_leaves_no_committed_artifacts(tmp_path: Path):
     dataset.close()
 
 
+def test_commit_does_not_require_a_particular_gripper_state(tmp_path: Path):
+    dataset = DemonstrationDataset(tmp_path, TASK_ROWS)
+    attempt = dataset.new_attempt(EpisodeMetadata(0, (1, 1, 1), "task zero", 0))
+    sample(attempt, stable=True, gripper=0, released=False)
+    assert attempt.commit() == "demo_000000"
+    dataset.close()
+
+
+def test_commit_rejects_success_when_end_effector_is_too_low(tmp_path: Path):
+    dataset = DemonstrationDataset(tmp_path, TASK_ROWS)
+    attempt = dataset.new_attempt(EpisodeMetadata(0, (1, 1, 1), "task zero", 0))
+    sample(attempt, stable=True, ee_high=False)
+    with pytest.raises(ValueError, match="three success criteria"):
+        attempt.commit()
+    attempt.discard()
+    dataset.close()
+
+
 def test_resume_rejects_incompatible_camera_rate(tmp_path: Path):
     dataset = DemonstrationDataset(tmp_path, TASK_ROWS, fps=30)
     dataset.close()
@@ -105,12 +136,26 @@ def test_resume_rejects_a_different_collection_seed(tmp_path: Path):
         DemonstrationDataset(tmp_path, TASK_ROWS, collection_seed=2002)
 
 
+def test_resume_rejects_a_different_success_hold_time(tmp_path: Path):
+    dataset = DemonstrationDataset(tmp_path, TASK_ROWS, success_hold_seconds=1.0)
+    dataset.close()
+    with pytest.raises(ValueError, match="incompatible"):
+        DemonstrationDataset(tmp_path, TASK_ROWS, success_hold_seconds=0.5)
+
+
+def test_resume_rejects_a_different_task_subset(tmp_path: Path):
+    dataset = DemonstrationDataset(tmp_path, TASK_ROWS, collection_task_ids=[0, 1])
+    dataset.close()
+    with pytest.raises(ValueError, match="incompatible"):
+        DemonstrationDataset(tmp_path, TASK_ROWS, collection_task_ids=[0, 2])
+
+
 def test_gripper_target_is_strict_binary(tmp_path: Path):
     dataset = DemonstrationDataset(tmp_path, TASK_ROWS)
     attempt = dataset.new_attempt(EpisodeMetadata(0, (1, 1, 1), "task zero", 0))
     images = {camera: np.zeros((256, 256, 3), dtype=np.uint8) for camera in ("front", "wrist", "side")}
     with pytest.raises(ValueError, match="0 or 1"):
-        attempt.append(images, np.zeros(7), 0.08, np.zeros(6), -1, False, False)
+        attempt.append(images, np.zeros(7), 0.08, np.zeros(6), -1, False, False, False, False)
     attempt.discard()
     dataset.close()
 

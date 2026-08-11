@@ -6,14 +6,38 @@ from isaaclab.app import AppLauncher
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--task", default="Isaac-CG-Household-Franka-IK-Rel-Vision-v0")
-parser.add_argument("--task-id", type=int, help="Collect only one task instead of the full catalog")
+task_selection = parser.add_mutually_exclusive_group()
+task_selection.add_argument("--task-id", type=int, help="Collect only one task ID")
+task_selection.add_argument(
+    "--task-set",
+    choices=("all", "orthogonal"),
+    default="all",
+    help="Named task subset; orthogonal is the OA(9, 3^3) nine-code design",
+)
+task_selection.add_argument(
+    "--task-codes",
+    nargs="+",
+    metavar="ABC",
+    help="Custom stage codes, for example: 111 122 133",
+)
 parser.add_argument("--teleop-device", choices=("spacemouse", "keyboard"), default="spacemouse")
 parser.add_argument("--spacemouse-backend", choices=("hid", "input"), default="hid")
 parser.add_argument("--spacemouse-device", help="Linux input-event node, e.g. /dev/input/event4")
 parser.add_argument("--sensitivity", type=float, default=1.0)
 parser.add_argument("--dataset-dir", required=True, help="Directory containing dataset.hdf5 and videos/")
 parser.add_argument("--demos-per-task", type=int, default=20)
-parser.add_argument("--num-success-steps", type=int, default=10)
+parser.add_argument(
+    "--success-hold-seconds",
+    type=float,
+    default=1.0,
+    help="Seconds all three success criteria must remain valid",
+)
+parser.add_argument(
+    "--success-ee-height",
+    type=float,
+    default=0.20,
+    help="Minimum final end-effector height in the robot-base frame, in meters",
+)
 parser.add_argument("--seed", type=int, default=0, help="Reproducible household layout randomization seed")
 AppLauncher.add_app_launcher_args(parser)
 args = parser.parse_args()
@@ -40,12 +64,19 @@ from cg_isaac_envs.data_collection import (  # noqa: E402
     EpisodeMetadata,
 )
 from cg_isaac_envs.devices import LinuxSpaceMouse, RawHidSpaceMouse  # noqa: E402
-from cg_isaac_envs.tasks.household.mdp.relations import alternative_results  # noqa: E402
+from cg_isaac_envs.tasks.household.mdp.relations import relation_value  # noqa: E402
 from cg_isaac_envs.tasks.household.mdp.terminations import required_object_dropped  # noqa: E402
-from cg_isaac_envs.tasks.household.task_catalog import CATALOG, OBJECT_NAMES, TASK_BY_ID  # noqa: E402
+from cg_isaac_envs.tasks.household.task_catalog import (  # noqa: E402
+    CATALOG,
+    TASK_BY_CODE,
+    TASK_BY_ID,
+    task_ids_for_set,
+)
 
 
 CAMERA_SCENE_NAMES = {"front": "front_camera", "wrist": "wrist_camera", "side": "side_camera"}
+COLLECTION_FPS = 30
+GRIPPER_RELEASE_WIDTH_M = 0.06
 
 
 class PromptPanel:
@@ -125,20 +156,49 @@ def camera_images(env) -> dict[str, np.ndarray]:
     return images
 
 
+def selected_task_ids() -> list[int]:
+    if args.task_id is not None:
+        if args.task_id not in TASK_BY_ID:
+            raise ValueError(f"Task ID must be in [0, {len(CATALOG) - 1}]")
+        return [args.task_id]
+    if args.task_codes is None:
+        return list(task_ids_for_set(args.task_set))
+
+    raw_codes = [part for token in args.task_codes for part in token.split(",")]
+    codes = []
+    for value in raw_codes:
+        compact = value.replace("-", "").strip()
+        if len(compact) != 3 or any(character not in "123" for character in compact):
+            raise ValueError(f"Invalid task code {value!r}; expected three stage choices from 1, 2, 3")
+        codes.append(tuple(int(character) for character in compact))
+    if len(codes) != len(set(codes)):
+        raise ValueError("--task-codes contains a duplicate task code")
+    return [TASK_BY_CODE[code].task_id for code in codes]
+
+
 def main():
-    if args.num_success_steps <= 0:
-        raise ValueError("--num-success-steps must be positive")
+    if args.success_hold_seconds <= 0:
+        raise ValueError("--success-hold-seconds must be positive")
+    if args.success_ee_height <= 0:
+        raise ValueError("--success-ee-height must be positive")
     if args.seed < 0:
         raise ValueError("--seed must be non-negative")
-    selected_task_ids = [args.task_id] if args.task_id is not None else list(range(len(CATALOG)))
-    if any(task_id not in TASK_BY_ID for task_id in selected_task_ids):
-        raise ValueError(f"Task ID must be in [0, {len(CATALOG) - 1}]")
+    collection_task_ids = selected_task_ids()
 
     dataset = DemonstrationDataset(
-        args.dataset_dir, task_rows(), fps=30, resolution=(256, 256), collection_seed=args.seed
+        args.dataset_dir,
+        task_rows(),
+        fps=COLLECTION_FPS,
+        resolution=(256, 256),
+        collection_seed=args.seed,
+        success_hold_seconds=args.success_hold_seconds,
+        gripper_release_width_m=GRIPPER_RELEASE_WIDTH_M,
+        success_ee_height_m=args.success_ee_height,
+        collection_task_ids=collection_task_ids,
     )
+    required_success_steps = max(1, round(args.success_hold_seconds * dataset.fps))
     dataset.set_requested_quota(args.demos_per_task)
-    scheduler = BalancedTaskScheduler(selected_task_ids, dataset.task_counts(), args.demos_per_task)
+    scheduler = BalancedTaskScheduler(collection_task_ids, dataset.task_counts(), args.demos_per_task)
     if scheduler.complete:
         print(f"Dataset quota is already complete: {scheduler.accepted}/{scheduler.target}")
         dataset.close()
@@ -250,6 +310,7 @@ def main():
 
     print(teleop)
     print("Dataset:", dataset.hdf5_path)
+    print("Task codes:", " ".join("".join(map(str, TASK_BY_ID[task_id].code)) for task_id in collection_task_ids))
     try:
         if not prepare_next_task():
             return
@@ -298,13 +359,45 @@ def main():
                 env.step(action[None, :])
                 ee_delta_pose = arm_term.processed_actions[0].detach().cpu().numpy()
                 gripper_target = int(action[6].item() > 0.0)
-                task_success = bool(alternative_results(env)[0][0])
-                speeds = torch.stack(
-                    [torch.linalg.vector_norm(env.scene[name].data.root_lin_vel_w[0]) for name in OBJECT_NAMES]
+                gripper_width_after = float(robot.data.joint_pos[0, finger_joint_ids].sum().item())
+                gripper_released = (
+                    gripper_target == 1 and gripper_width_after >= GRIPPER_RELEASE_WIDTH_M
                 )
-                stable_now = task_success and bool(speeds.amax() < 0.08)
+                ee_pos_after_b, _ = arm_term._compute_frame_pose()
+                ee_high_enough = bool(ee_pos_after_b[0, 2] >= args.success_ee_height)
+                current_task = TASK_BY_ID[current_task_id]
+                goal_states = [
+                    (
+                        goal,
+                        bool(relation_value(env, goal.subject, goal.relation, goal.target)[0])
+                    )
+                    for goal in current_task.alternatives[0]
+                ]
+                task_success = all(value if goal.required else not value for goal, value in goal_states)
+                stable_now = task_success and ee_high_enough
                 success_steps = success_steps + 1 if stable_now else 0
-                stable_success = success_steps >= args.num_success_steps
+                stable_success = success_steps >= required_success_steps
+
+                failed_goal = next(
+                    (
+                        goal
+                        for goal, value in goal_states
+                        if (goal.required and not value) or (not goal.required and value)
+                    ),
+                    None,
+                )
+                if failed_goal is not None and failed_goal.relation == "inside":
+                    update_panel("WAITING — selected cube is not inside the target mug")
+                elif failed_goal is not None and failed_goal.relation == "on":
+                    update_panel("WAITING — target mug is not on its station")
+                elif task_success and not ee_high_enough:
+                    update_panel(
+                        f"PLACE COMPLETE — raise end effector above {args.success_ee_height:.2f} m"
+                    )
+                elif stable_now:
+                    update_panel(f"VERIFYING SUCCESS {success_steps}/{required_success_steps}")
+                else:
+                    update_panel("RECORDING")
 
                 attempt.append(
                     images=images,
@@ -313,6 +406,8 @@ def main():
                     ee_delta_pose=ee_delta_pose,
                     gripper_target=gripper_target,
                     task_success=task_success,
+                    gripper_released=gripper_released,
+                    ee_high_enough=ee_high_enough,
                     stable_success=stable_success,
                 )
 

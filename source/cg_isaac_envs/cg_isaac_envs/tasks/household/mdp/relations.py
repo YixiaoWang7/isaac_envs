@@ -6,6 +6,7 @@ import torch
 import isaaclab.utils.math as math_utils
 
 from ..task_catalog import OBJECT_NAMES, STAGE_NAMES, TASK_BY_ID
+from ..relation_geometry import cube_inside_mug_relative, mug_on_station_relative
 
 GEOMETRY = {
     "red_candy": (0.018, 0.018, 0.018),
@@ -14,9 +15,9 @@ GEOMETRY = {
     "mug_a": (0.042, 0.042, 0.080),
     "mug_b": (0.042, 0.042, 0.080),
     "mug_c": (0.042, 0.042, 0.080),
-    "hot_serving_place": (0.085, 0.085, 0.012),
-    "cold_serving_place": (0.085, 0.085, 0.012),
-    "storage_place": (0.120, 0.090, 0.025),
+    "hot_serving_place": (0.076, 0.076, 0.012),
+    "cold_serving_place": (0.067, 0.067, 0.012),
+    "storage_place": (0.090, 0.050, 0.025),
 }
 
 
@@ -34,6 +35,8 @@ def relative_position(env, subject: str, target: str) -> torch.Tensor:
 
 def inside(env, subject: str, target: str) -> torch.Tensor:
     rel = relative_position(env, subject, target)
+    if subject.endswith("_candy") and target.startswith("mug_"):
+        return cube_inside_mug_relative(rel)
     tx, ty, tz = GEOMETRY[target]
     sx, sy, _ = GEOMETRY[subject]
     x_margin = max(0.018, tx - min(sx * 0.45, tx * 0.35))
@@ -53,6 +56,10 @@ def at(env, subject: str, target: str) -> torch.Tensor:
 
 
 def on(env, subject: str, target: str) -> torch.Tensor:
+    if subject.startswith("mug_") and target in {
+        "hot_serving_place", "cold_serving_place", "storage_place"
+    }:
+        return mug_on_station_relative(relative_position(env, subject, target), target)
     return at(env, subject, target)
 
 def beside(env, subject: str, target: str) -> torch.Tensor:

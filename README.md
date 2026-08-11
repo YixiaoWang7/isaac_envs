@@ -92,6 +92,8 @@ SpaceMouse controls:
 - During data collection, a reset task first enters `READY` mode so the prompt and scene can be inspected. Button 2
   starts recording from `READY`. While `RECORDING`, button 2 discards the entire attempt, resets the same task, and
   returns to `READY`; press it again when prepared to start the replacement attempt.
+- After completing the placement, raise the end effector above 0.20 m and keep all three success conditions valid for
+  one second. The attempt is saved only after this full verification period.
 - `--sensitivity VALUE` scales translation and rotation speed; the default is `1.0`.
 
 The main viewport shows the front camera. Separate wrist and robot-right side windows open at the same time. The active
@@ -123,17 +125,55 @@ python scripts/record_demos.py \
   --seed 1001
 ```
 
+To collect only the `OA(9, 3³)` orthogonal nine-task design, add `--task-set orthogonal`:
+
+| Run | Stage A | Stage B | Stage C | Task ID |
+| --: | :-----: | :-----: | :-----: | ------: |
+| 1 | 1 | 1 | 1 | 0 |
+| 2 | 1 | 2 | 2 | 4 |
+| 3 | 1 | 3 | 3 | 8 |
+| 4 | 2 | 1 | 2 | 10 |
+| 5 | 2 | 2 | 3 | 14 |
+| 6 | 2 | 3 | 1 | 15 |
+| 7 | 3 | 1 | 3 | 20 |
+| 8 | 3 | 2 | 1 | 21 |
+| 9 | 3 | 3 | 2 | 25 |
+
+```bash
+python scripts/record_demos.py \
+  --teleop-device spacemouse \
+  --spacemouse-backend hid \
+  --task-set orthogonal \
+  --dataset-dir datasets/household_orthogonal_10_each \
+  --demos-per-task 10 \
+  --seed 1001
+```
+
+For an arbitrary subset, use stage codes directly, for example
+`--task-codes 111 122 133`. A dataset records its exact selected task IDs, so resume it with the same `--task-set` or
+`--task-codes` selection and order.
+
 If raw HID is unavailable but the Linux event interface has been verified, replace `--spacemouse-backend hid` with
 `--spacemouse-backend input --spacemouse-device /dev/input/event4` (using the current event node).
 
-Only demonstrations satisfying the complete goal for ten consecutive stable steps are exported. Each HDF5 timestep
-contains the robot-base end-effector pose, measured gripper width, processed six-axis IK delta, absolute binary gripper
-target, and post-action success flags. Three synchronized 256 px MP4 files contain the front, wrist, and side views.
-The collector balances successful episodes across task IDs and safely resumes an incomplete compatible dataset. Its
-gripper action is a step-function target (`0 = closed`, `1 = open`), not a delta.
+The collector completes the requested quota for the current selected task before showing the next selected task, and
+continues in the requested task-code order. Success has exactly three conditions: the selected cube is inside the
+target mug cavity, the target mug is physically on the target station, and the end effector is at least 0.20 m high in
+the robot-base frame. These conditions must remain true for one continuous second (30 control steps by default); if
+any becomes false, the timer restarts. Gripper state, object velocity, and handle-lift detection do not gate success.
+The geometric checks reject cubes above the mug rim and mugs hovering above or outside a station. The collection panel
+reports which of the three conditions is still missing. Use `--success-ee-height` to configure the retreat threshold.
+
+Each HDF5 timestep contains the robot-base end-effector pose, measured gripper width, processed six-axis IK delta,
+absolute binary gripper target, and post-action task/release/success flags. Three synchronized 256 px MP4 files contain
+the front, wrist, and side views. The collector enforces equal successful-episode quotas across task IDs and safely
+resumes an incomplete compatible dataset. Its gripper action is a step-function target (`0 = closed`, `1 = open`), not
+a delta. The verification duration can be changed with `--success-hold-seconds`, although one second is recommended.
 
 Use a different `--seed` with a different dataset directory to collect another independent layout sequence. Reuse the
 original seed when resuming an existing dataset; the collector rejects a mismatched seed to prevent accidental mixing.
+The exact task subset and success definition are also part of the dataset schema. If either changes, start a new
+dataset directory rather than mixing demonstrations collected under different criteria.
 
 Successful episodes are stored in `dataset.hdf5`, with three corresponding MP4 files under `videos/`. Operator-reset,
 dropped-object, and interrupted attempts are removed rather than added to the dataset. Inspect a collection with:

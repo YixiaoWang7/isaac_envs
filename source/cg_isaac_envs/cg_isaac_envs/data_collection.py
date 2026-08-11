@@ -14,7 +14,7 @@ import h5py
 import numpy as np
 
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 4
 CAMERA_NAMES = ("front", "wrist", "side")
 ACTION_ORDER = ("dx", "dy", "dz", "dRx", "dRy", "dRz", "gripper_target")
 
@@ -26,7 +26,7 @@ def catalog_fingerprint(task_rows: list[dict]) -> str:
 
 
 class BalancedTaskScheduler:
-    """Cycle through tasks that have not reached their successful-demo quota."""
+    """Complete each task's successful-demo quota in catalog order."""
 
     def __init__(self, task_ids: list[int], counts: dict[int, int], quota: int):
         if quota <= 0:
@@ -36,7 +36,6 @@ class BalancedTaskScheduler:
         self.task_ids = tuple(task_ids)
         self.counts = {task_id: int(counts.get(task_id, 0)) for task_id in self.task_ids}
         self.quota = quota
-        self._cursor = -1
 
     @property
     def complete(self) -> bool:
@@ -51,13 +50,8 @@ class BalancedTaskScheduler:
         return len(self.task_ids) * self.quota
 
     def next_task(self) -> int | None:
-        if self.complete:
-            return None
-        for offset in range(1, len(self.task_ids) + 1):
-            index = (self._cursor + offset) % len(self.task_ids)
-            task_id = self.task_ids[index]
+        for task_id in self.task_ids:
             if self.counts[task_id] < self.quota:
-                self._cursor = index
                 return task_id
         return None
 
@@ -86,6 +80,10 @@ class DemonstrationDataset:
         fps: int = 30,
         resolution: tuple[int, int] = (256, 256),
         collection_seed: int = 0,
+        success_hold_seconds: float = 1.0,
+        gripper_release_width_m: float = 0.06,
+        success_ee_height_m: float = 0.20,
+        collection_task_ids: list[int] | tuple[int, ...] | None = None,
     ):
         self.root = Path(dataset_dir).expanduser().resolve()
         self.video_dir = self.root / "videos"
@@ -95,6 +93,16 @@ class DemonstrationDataset:
         self.resolution = tuple(int(value) for value in resolution)
         self.task_rows = task_rows
         self.collection_seed = int(collection_seed)
+        self.success_hold_seconds = float(success_hold_seconds)
+        self.gripper_release_width_m = float(gripper_release_width_m)
+        self.success_ee_height_m = float(success_ee_height_m)
+        self.collection_task_ids = tuple(
+            int(task_id) for task_id in (
+                collection_task_ids
+                if collection_task_ids is not None
+                else (row["task_id"] for row in task_rows)
+            )
+        )
         self.fingerprint = catalog_fingerprint(task_rows)
         self.root.mkdir(parents=True, exist_ok=True)
         self.video_dir.mkdir(exist_ok=True)
@@ -115,6 +123,7 @@ class DemonstrationDataset:
             "schema_version": SCHEMA_VERSION,
             "task_catalog_sha256": self.fingerprint,
             "task_count": len(self.task_rows),
+            "collection_task_ids": list(self.collection_task_ids),
             "collection_seed": self.collection_seed,
             "fps": self.fps,
             "resolution": list(self.resolution),
@@ -125,6 +134,14 @@ class DemonstrationDataset:
             "rotation_delta": "axis_angle_radians",
             "translation_delta": "robot_base_meters",
             "gripper_target": {"closed": 0, "open": 1},
+            "success_hold_seconds": self.success_hold_seconds,
+            "gripper_release_width_m": self.gripper_release_width_m,
+            "success_ee_height_m": self.success_ee_height_m,
+            "success_criteria": [
+                "selected_cube_inside_target_mug",
+                "target_mug_on_target_station",
+                "end_effector_at_or_above_success_height",
+            ],
             "action_order": list(ACTION_ORDER),
         }
 
@@ -207,6 +224,8 @@ class EpisodeAttempt:
             "ee_delta_pose": [],
             "gripper_target": [],
             "task_success": [],
+            "gripper_released": [],
+            "ee_high_enough": [],
             "stable_success": [],
             "time": [],
         }
@@ -232,6 +251,8 @@ class EpisodeAttempt:
         ee_delta_pose: np.ndarray,
         gripper_target: int,
         task_success: bool,
+        gripper_released: bool,
+        ee_high_enough: bool,
         stable_success: bool,
     ) -> None:
         if self.closed:
@@ -249,6 +270,8 @@ class EpisodeAttempt:
         self.buffers["ee_delta_pose"].append(np.asarray(ee_delta_pose, dtype=np.float32).reshape(6))
         self.buffers["gripper_target"].append(gripper_target)
         self.buffers["task_success"].append(task_success)
+        self.buffers["gripper_released"].append(gripper_released)
+        self.buffers["ee_high_enough"].append(ee_high_enough)
         self.buffers["stable_success"].append(stable_success)
         self.buffers["time"].append(self.frames / self.dataset.fps)
         self.frames += 1
@@ -290,6 +313,8 @@ class EpisodeAttempt:
             raise ValueError("Cannot commit an empty demonstration")
         if not bool(self.buffers["stable_success"][-1]):
             raise ValueError("Cannot commit an episode without terminal stable success")
+        if not (bool(self.buffers["task_success"][-1]) and bool(self.buffers["ee_high_enough"][-1])):
+            raise ValueError("Cannot commit success before all three success criteria are satisfied")
         self._close_videos()
         try:
             self._validate_videos()
@@ -336,6 +361,16 @@ class EpisodeAttempt:
             signals.create_dataset(
                 "task_success_after_action",
                 data=np.asarray(self.buffers["task_success"], dtype=np.bool_)[:, None],
+                compression="gzip",
+            )
+            signals.create_dataset(
+                "gripper_released_after_action",
+                data=np.asarray(self.buffers["gripper_released"], dtype=np.bool_)[:, None],
+                compression="gzip",
+            )
+            signals.create_dataset(
+                "ee_high_enough_after_action",
+                data=np.asarray(self.buffers["ee_high_enough"], dtype=np.bool_)[:, None],
                 compression="gzip",
             )
             signals.create_dataset(
