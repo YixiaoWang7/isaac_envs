@@ -92,8 +92,8 @@ SpaceMouse controls:
 - During data collection, a reset task first enters `READY` mode so the prompt and scene can be inspected. Button 2
   starts recording from `READY`. While `RECORDING`, button 2 discards the entire attempt, resets the same task, and
   returns to `READY`; press it again when prepared to start the replacement attempt.
-- After completing the placement, raise the end effector above 0.20 m and keep all three success conditions valid for
-  one second. The attempt is saved only after this full verification period.
+- After completing the placement, open the gripper and keep the released cube and mug stationary for one second. The
+  attempt is saved only after this full verification period.
 - `--sensitivity VALUE` scales translation and rotation speed; the default is `1.0`.
 
 The main viewport shows the front camera. Separate wrist and robot-right side windows open at the same time. The active
@@ -157,15 +157,13 @@ If raw HID is unavailable but the Linux event interface has been verified, repla
 `--spacemouse-backend input --spacemouse-device /dev/input/event4` (using the current event node).
 
 The collector completes the requested quota for the current selected task before showing the next selected task, and
-continues in the requested task-code order. Success has exactly three conditions: the selected cube is inside the
-target mug cavity, the target mug is physically on the target station, and the end effector is at least 0.20 m high in
-the robot-base frame. These conditions must remain true for one continuous second (30 control steps by default); if
-any becomes false, the timer restarts. Gripper state, object velocity, and handle-lift detection do not gate success.
-The geometric checks reject cubes above the mug rim and mugs hovering above or outside a station. The collection panel
-reports which of the three conditions is still missing. Use `--success-ee-height` to configure the retreat threshold.
+continues in the requested task-code order. A success requires the task relations to be complete, the gripper to be
+open with the mug released, and the selected cube and mug to be stationary. For the red hot station, the mug must also
+have been lifted by its handle. These conditions must remain true for one continuous second (30 control steps by
+default); if any becomes false, the timer restarts. The collection panel reports what is still missing.
 
 Each HDF5 timestep contains the robot-base end-effector pose, measured gripper width, processed six-axis IK delta,
-absolute binary gripper target, and post-action task/release/success flags. Three synchronized 256 px MP4 files contain
+absolute binary gripper target, and post-action task/release/stability/success flags. Three synchronized 256 px MP4 files contain
 the front, wrist, and side views. The collector enforces equal successful-episode quotas across task IDs and safely
 resumes an incomplete compatible dataset. Its gripper action is a step-function target (`0 = closed`, `1 = open`), not
 a delta. The verification duration can be changed with `--success-hold-seconds`, although one second is recommended.

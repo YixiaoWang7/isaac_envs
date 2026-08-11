@@ -30,13 +30,7 @@ parser.add_argument(
     "--success-hold-seconds",
     type=float,
     default=1.0,
-    help="Seconds all three success criteria must remain valid",
-)
-parser.add_argument(
-    "--success-ee-height",
-    type=float,
-    default=0.20,
-    help="Minimum final end-effector height in the robot-base frame, in meters",
+    help="Seconds the completed, released, stable scene must remain valid",
 )
 parser.add_argument("--seed", type=int, default=0, help="Reproducible household layout randomization seed")
 AppLauncher.add_app_launcher_args(parser)
@@ -64,7 +58,7 @@ from cg_isaac_envs.data_collection import (  # noqa: E402
     EpisodeMetadata,
 )
 from cg_isaac_envs.devices import LinuxSpaceMouse, RawHidSpaceMouse  # noqa: E402
-from cg_isaac_envs.tasks.household.mdp.relations import relation_value  # noqa: E402
+from cg_isaac_envs.tasks.household.mdp.relations import alternative_results, relation_value  # noqa: E402
 from cg_isaac_envs.tasks.household.mdp.terminations import required_object_dropped  # noqa: E402
 from cg_isaac_envs.tasks.household.task_catalog import (  # noqa: E402
     CATALOG,
@@ -179,8 +173,6 @@ def selected_task_ids() -> list[int]:
 def main():
     if args.success_hold_seconds <= 0:
         raise ValueError("--success-hold-seconds must be positive")
-    if args.success_ee_height <= 0:
-        raise ValueError("--success-ee-height must be positive")
     if args.seed < 0:
         raise ValueError("--seed must be non-negative")
     collection_task_ids = selected_task_ids()
@@ -193,7 +185,6 @@ def main():
         collection_seed=args.seed,
         success_hold_seconds=args.success_hold_seconds,
         gripper_release_width_m=GRIPPER_RELEASE_WIDTH_M,
-        success_ee_height_m=args.success_ee_height,
         collection_task_ids=collection_task_ids,
     )
     required_success_steps = max(1, round(args.success_hold_seconds * dataset.fps))
@@ -315,7 +306,11 @@ def main():
         if not prepare_next_task():
             return
         with torch.inference_mode():
-            while simulation_app.is_running() and not scheduler.complete:
+            while not scheduler.complete:
+                if not simulation_app.is_running():
+                    raise RuntimeError(
+                        "Isaac Sim stopped before data collection completed; inspect the latest Kit log"
+                    )
                 if not recording:
                     if reset_requested:
                         start_recording()
@@ -363,8 +358,6 @@ def main():
                 gripper_released = (
                     gripper_target == 1 and gripper_width_after >= GRIPPER_RELEASE_WIDTH_M
                 )
-                ee_pos_after_b, _ = arm_term._compute_frame_pose()
-                ee_high_enough = bool(ee_pos_after_b[0, 2] >= args.success_ee_height)
                 current_task = TASK_BY_ID[current_task_id]
                 goal_states = [
                     (
@@ -373,8 +366,15 @@ def main():
                     )
                     for goal in current_task.alternatives[0]
                 ]
-                task_success = all(value if goal.required else not value for goal, value in goal_states)
-                stable_now = task_success and ee_high_enough
+                task_success = bool(alternative_results(env)[0][0])
+                required_object_speeds = torch.stack(
+                    [
+                        torch.linalg.vector_norm(env.scene[name].data.root_lin_vel_w[0])
+                        for name in current_task.manipulation_subjects
+                    ]
+                )
+                required_objects_stable = bool(required_object_speeds.amax() < 0.08)
+                stable_now = task_success and gripper_released and required_objects_stable
                 success_steps = success_steps + 1 if stable_now else 0
                 stable_success = success_steps >= required_success_steps
 
@@ -390,10 +390,12 @@ def main():
                     update_panel("WAITING — selected cube is not inside the target mug")
                 elif failed_goal is not None and failed_goal.relation == "on":
                     update_panel("WAITING — target mug is not on its station")
-                elif task_success and not ee_high_enough:
-                    update_panel(
-                        f"PLACE COMPLETE — raise end effector above {args.success_ee_height:.2f} m"
-                    )
+                elif failed_goal is not None and failed_goal.relation == "handle_lift":
+                    update_panel("WAITING — lift the hot-station mug by its handle")
+                elif task_success and not gripper_released:
+                    update_panel("PLACE COMPLETE — open the gripper and release the mug")
+                elif task_success and not required_objects_stable:
+                    update_panel("RELEASED — wait for the cube and mug to stop moving")
                 elif stable_now:
                     update_panel(f"VERIFYING SUCCESS {success_steps}/{required_success_steps}")
                 else:
@@ -407,7 +409,7 @@ def main():
                     gripper_target=gripper_target,
                     task_success=task_success,
                     gripper_released=gripper_released,
-                    ee_high_enough=ee_high_enough,
+                    required_objects_stable=required_objects_stable,
                     stable_success=stable_success,
                 )
 

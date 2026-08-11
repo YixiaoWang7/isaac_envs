@@ -14,7 +14,7 @@ import h5py
 import numpy as np
 
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 CAMERA_NAMES = ("front", "wrist", "side")
 ACTION_ORDER = ("dx", "dy", "dz", "dRx", "dRy", "dRz", "gripper_target")
 
@@ -82,7 +82,6 @@ class DemonstrationDataset:
         collection_seed: int = 0,
         success_hold_seconds: float = 1.0,
         gripper_release_width_m: float = 0.06,
-        success_ee_height_m: float = 0.20,
         collection_task_ids: list[int] | tuple[int, ...] | None = None,
     ):
         self.root = Path(dataset_dir).expanduser().resolve()
@@ -95,7 +94,6 @@ class DemonstrationDataset:
         self.collection_seed = int(collection_seed)
         self.success_hold_seconds = float(success_hold_seconds)
         self.gripper_release_width_m = float(gripper_release_width_m)
-        self.success_ee_height_m = float(success_ee_height_m)
         self.collection_task_ids = tuple(
             int(task_id) for task_id in (
                 collection_task_ids
@@ -136,11 +134,10 @@ class DemonstrationDataset:
             "gripper_target": {"closed": 0, "open": 1},
             "success_hold_seconds": self.success_hold_seconds,
             "gripper_release_width_m": self.gripper_release_width_m,
-            "success_ee_height_m": self.success_ee_height_m,
             "success_criteria": [
-                "selected_cube_inside_target_mug",
-                "target_mug_on_target_station",
-                "end_effector_at_or_above_success_height",
+                "task_relations",
+                "gripper_released",
+                "required_objects_stable",
             ],
             "action_order": list(ACTION_ORDER),
         }
@@ -154,10 +151,26 @@ class DemonstrationDataset:
             self.data.attrs["next_layout_index"] = 0
             self.stream.flush()
         elif existing != expected:
-            raise ValueError(
-                f"Dataset at {self.hdf5_path} is incompatible with this collector. "
-                f"Existing schema: {existing}; requested schema: {expected}"
-            )
+            # A launch may create the HDF5 file before the first recording. It is
+            # safe to update that empty file when the collector schema changes;
+            # committed demonstrations are never migrated implicitly.
+            has_demos = any(name.startswith("demo_") for name in self.data)
+            try:
+                existing_version = int(json.loads(existing)["schema_version"])
+            except (TypeError, ValueError, KeyError, json.JSONDecodeError):
+                existing_version = SCHEMA_VERSION
+            if (
+                not has_demos
+                and int(self.data.attrs.get("total", 0)) == 0
+                and existing_version != SCHEMA_VERSION
+            ):
+                self.data.attrs["collection_schema"] = expected
+                self.stream.flush()
+            else:
+                raise ValueError(
+                    f"Dataset at {self.hdf5_path} is incompatible with this collector. "
+                    f"Existing schema: {existing}; requested schema: {expected}"
+                )
 
     def _discard_stale_partials(self) -> None:
         for path in self.partial_dir.glob("attempt_*"):
@@ -225,7 +238,7 @@ class EpisodeAttempt:
             "gripper_target": [],
             "task_success": [],
             "gripper_released": [],
-            "ee_high_enough": [],
+            "required_objects_stable": [],
             "stable_success": [],
             "time": [],
         }
@@ -252,7 +265,7 @@ class EpisodeAttempt:
         gripper_target: int,
         task_success: bool,
         gripper_released: bool,
-        ee_high_enough: bool,
+        required_objects_stable: bool,
         stable_success: bool,
     ) -> None:
         if self.closed:
@@ -271,7 +284,7 @@ class EpisodeAttempt:
         self.buffers["gripper_target"].append(gripper_target)
         self.buffers["task_success"].append(task_success)
         self.buffers["gripper_released"].append(gripper_released)
-        self.buffers["ee_high_enough"].append(ee_high_enough)
+        self.buffers["required_objects_stable"].append(required_objects_stable)
         self.buffers["stable_success"].append(stable_success)
         self.buffers["time"].append(self.frames / self.dataset.fps)
         self.frames += 1
@@ -313,8 +326,12 @@ class EpisodeAttempt:
             raise ValueError("Cannot commit an empty demonstration")
         if not bool(self.buffers["stable_success"][-1]):
             raise ValueError("Cannot commit an episode without terminal stable success")
-        if not (bool(self.buffers["task_success"][-1]) and bool(self.buffers["ee_high_enough"][-1])):
-            raise ValueError("Cannot commit success before all three success criteria are satisfied")
+        if not (
+            bool(self.buffers["task_success"][-1])
+            and bool(self.buffers["gripper_released"][-1])
+            and bool(self.buffers["required_objects_stable"][-1])
+        ):
+            raise ValueError("Cannot commit before the task is complete, released, and stable")
         self._close_videos()
         try:
             self._validate_videos()
@@ -369,8 +386,8 @@ class EpisodeAttempt:
                 compression="gzip",
             )
             signals.create_dataset(
-                "ee_high_enough_after_action",
-                data=np.asarray(self.buffers["ee_high_enough"], dtype=np.bool_)[:, None],
+                "required_objects_stable_after_action",
+                data=np.asarray(self.buffers["required_objects_stable"], dtype=np.bool_)[:, None],
                 compression="gzip",
             )
             signals.create_dataset(

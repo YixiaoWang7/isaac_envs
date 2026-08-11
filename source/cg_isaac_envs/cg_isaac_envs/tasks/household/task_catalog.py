@@ -50,7 +50,8 @@ def build_catalog():
             task_id=len(tasks),code=(s1,s2,s3),family="candy_mug_service",selected_object=candy,destination=destination,associated_object=mug,
             prompts=(f"Put the {candy_label} in the {mug_label}, then move it to the {station_label}.{handle_note}",f"{candy_label.capitalize()}, {mug_label}, {station_label}.{handle_note}"),
             stage_instructions=(f"Pick up the {candy_label}.",f"Put it in the {mug_label}.",f"Move the {mug_label} to the {station_label}."+handle_note),
-            alternatives=((RelationGoal(candy,"inside",mug),RelationGoal(mug,"on",destination)),),
+            alternatives=((RelationGoal(candy,"inside",mug),RelationGoal(mug,"on",destination),
+                           *((RelationGoal(mug,"handle_lift",mug),) if destination=="hot_serving_place" else ())),),
             manipulation_subjects=(candy,mug)))
     return tuple(tasks)
 CATALOG=build_catalog(); TASK_BY_ID={t.task_id:t for t in CATALOG}; TASK_BY_CODE={t.code:t for t in CATALOG}

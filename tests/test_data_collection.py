@@ -39,7 +39,7 @@ def test_scheduler_finishes_one_task_before_advancing():
     assert scheduler.next_task() == 1
 
 
-def sample(attempt, stable=False, gripper=1, released=None, ee_high=None):
+def sample(attempt, stable=False, gripper=1, released=None, objects_stable=None):
     images = {
         camera: np.full((256, 256, 3), channel * 40, dtype=np.uint8)
         for channel, camera in enumerate(("front", "wrist", "side"), start=1)
@@ -52,7 +52,7 @@ def sample(attempt, stable=False, gripper=1, released=None, ee_high=None):
         gripper_target=gripper,
         task_success=stable,
         gripper_released=stable if released is None else released,
-        ee_high_enough=stable if ee_high is None else ee_high,
+        required_objects_stable=stable if objects_stable is None else objects_stable,
         stable_success=stable,
     )
 
@@ -72,7 +72,7 @@ def test_success_commit_writes_synchronized_hdf5_and_mp4(tmp_path: Path):
         assert episode["actions/ee_delta_pose"].shape == (2, 6)
         assert episode["actions/gripper_target"][:, 0].tolist() == [1, 1]
         assert episode["signals/gripper_released_after_action"][:, 0].tolist() == [False, True]
-        assert episode["signals/ee_high_enough_after_action"][:, 0].tolist() == [False, True]
+        assert episode["signals/required_objects_stable_after_action"][:, 0].tolist() == [False, True]
         assert episode["signals/stable_success_after_action"][:, 0].tolist() == [False, True]
         assert episode.attrs["task_id"] == 1
         assert stream["data"].attrs["total"] == 2
@@ -104,19 +104,21 @@ def test_discard_leaves_no_committed_artifacts(tmp_path: Path):
     dataset.close()
 
 
-def test_commit_does_not_require_a_particular_gripper_state(tmp_path: Path):
+def test_commit_requires_the_gripper_to_be_released(tmp_path: Path):
     dataset = DemonstrationDataset(tmp_path, TASK_ROWS)
     attempt = dataset.new_attempt(EpisodeMetadata(0, (1, 1, 1), "task zero", 0))
     sample(attempt, stable=True, gripper=0, released=False)
-    assert attempt.commit() == "demo_000000"
+    with pytest.raises(ValueError, match="released"):
+        attempt.commit()
+    attempt.discard()
     dataset.close()
 
 
-def test_commit_rejects_success_when_end_effector_is_too_low(tmp_path: Path):
+def test_commit_requires_required_objects_to_be_stable(tmp_path: Path):
     dataset = DemonstrationDataset(tmp_path, TASK_ROWS)
     attempt = dataset.new_attempt(EpisodeMetadata(0, (1, 1, 1), "task zero", 0))
-    sample(attempt, stable=True, ee_high=False)
-    with pytest.raises(ValueError, match="three success criteria"):
+    sample(attempt, stable=True, objects_stable=False)
+    with pytest.raises(ValueError, match="stable"):
         attempt.commit()
     attempt.discard()
     dataset.close()

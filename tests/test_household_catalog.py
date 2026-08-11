@@ -30,10 +30,13 @@ def test_splits_are_disjoint_and_complete():
     assert not train & ood
     assert train | ood==set(range(27))
 
-def test_final_state_has_exactly_inside_and_on_relations():
+def test_hot_tasks_require_handle_lift_only():
     for task in CATALOG:
         relations={goal.relation for goal in task.alternatives[0]}
-        assert relations=={"inside", "on"}
+        if task.destination=="hot_serving_place":
+            assert relations=={"inside", "on", "handle_lift"}
+        else:
+            assert relations=={"inside", "on"}
 
 def test_prompts_use_short_visual_labels():
     for task in CATALOG:
