@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from itertools import product
 from typing import Literal
-RelationKind = Literal["inside", "on"]
+RelationKind = Literal["inside", "on", "beside", "handle_lift"]
 @dataclass(frozen=True)
 class RelationGoal:
     subject: str
@@ -23,32 +23,36 @@ class TaskSpec:
     alternatives: tuple[tuple[RelationGoal,...],...]
     manipulation_subjects: tuple[str,str]
     @property
-    def side(self): return {"left_place":"left","right_place":"right","packing_place":"packing"}[self.destination]
+    def side(self): return {"hot_serving_place":"hot","cold_serving_place":"cold","storage_place":"storage"}[self.destination]
     @property
     def factor_dict(self):
         return {"family":self.family,"stage_code":"-".join(map(str,self.code)),"selected_object":self.selected_object,"destination":self.destination,"associated_object":self.associated_object,"side":self.side,"item":self.associated_object}
     @property
     def canonical_prompt(self): return self.prompts[0]
-STAGE_1={1:"bowl",2:"plate",3:"serving_pan"}
-STAGE_2={1:"left_place",2:"right_place",3:"packing_place"}
-STAGE_3={1:"apple",2:"banana",3:"snack_package"}
-STAGE_NAMES=("pick_container","place_container","place_food")
-OBJECT_NAMES=("bowl","plate","serving_pan","apple","banana","snack_package")
-TARGET_NAMES=("left_place","right_place","packing_place")
-FAMILIES=("meal_setup",)
+STAGE_1={1:"red_candy",2:"blue_candy",3:"green_candy"}
+STAGE_2={1:"mug_a",2:"mug_b",3:"mug_c"}
+STAGE_3={1:"hot_serving_place",2:"cold_serving_place",3:"storage_place"}
+MUG_LABELS={"mug_a":"white mug","mug_b":"blue mug","mug_c":"red mug"}
+STATION_LABELS={"hot_serving_place":"red station","cold_serving_place":"blue station","storage_place":"green station"}
+STAGE_NAMES=("pick_candy","place_candy_in_mug","move_mug_to_destination")
+OBJECT_NAMES=("red_candy","blue_candy","green_candy","mug_a","mug_b","mug_c")
+TARGET_NAMES=("hot_serving_place","cold_serving_place","storage_place")
+FAMILIES=("candy_mug_service",)
 def build_catalog():
     tasks=[]
     for s1,s2,s3 in product(STAGE_1,STAGE_2,STAGE_3):
-        container,destination,food=STAGE_1[s1],STAGE_2[s2],STAGE_3[s3]
-        relation="inside" if container=="bowl" else "on"
-        place={"left_place":"left dining place","right_place":"right dining place","packing_place":"packing place"}[destination]
-        prep="in" if relation=="inside" else "on"
+        candy,mug,destination=STAGE_1[s1],STAGE_2[s2],STAGE_3[s3]
+        candy_label=candy.replace('_',' ')
+        mug_label=MUG_LABELS[mug]
+        station_label=STATION_LABELS[destination]
+        handle_note=" Use the handle." if destination=="hot_serving_place" else ""
         tasks.append(TaskSpec(
-            task_id=len(tasks),code=(s1,s2,s3),family="meal_setup",selected_object=container,destination=destination,associated_object=food,
-            prompts=(f"Place the {container.replace('_',' ')} at the {place} and put the {food.replace('_',' ')} {prep} it.",f"Set the {container.replace('_',' ')} at the {place}, then add the {food.replace('_',' ')}."),
-            stage_instructions=(f"Pick up the {container.replace('_',' ')}.",f"Place it at the {place}.",f"Put the {food.replace('_',' ')} {prep} it."),
-            alternatives=((RelationGoal(container,"on",destination),RelationGoal(food,relation,container)),),
-            manipulation_subjects=(container,food)))
+            task_id=len(tasks),code=(s1,s2,s3),family="candy_mug_service",selected_object=candy,destination=destination,associated_object=mug,
+            prompts=(f"Put the {candy_label} in the {mug_label}, then move it to the {station_label}.{handle_note}",f"{candy_label.capitalize()}, {mug_label}, {station_label}.{handle_note}"),
+            stage_instructions=(f"Pick up the {candy_label}.",f"Put it in the {mug_label}.",f"Move the {mug_label} to the {station_label}."+handle_note),
+            alternatives=((RelationGoal(candy,"inside",mug),RelationGoal(mug,"on",destination),
+                           *((RelationGoal(mug,"handle_lift",mug),) if destination=="hot_serving_place" else ())),),
+            manipulation_subjects=(candy,mug)))
     return tuple(tasks)
 CATALOG=build_catalog(); TASK_BY_ID={t.task_id:t for t in CATALOG}; TASK_BY_CODE={t.code:t for t in CATALOG}
 def split_task_ids(name):

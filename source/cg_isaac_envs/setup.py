@@ -9,7 +9,6 @@ setup(
     packages=find_packages(),
     include_package_data=True,
     python_requires=">=3.11",
-    install_requires=["gymnasium", "torch"],
+    install_requires=["gymnasium", "h5py", "numpy", "opencv-python", "pyspacemouse==2.0.0", "torch"],
     zip_safe=False,
 )
-

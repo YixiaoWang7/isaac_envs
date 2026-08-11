@@ -34,6 +34,7 @@ import subprocess  # noqa: E402
 from pathlib import Path  # noqa: E402
 
 import gymnasium as gym  # noqa: E402
+import imageio_ffmpeg  # noqa: E402
 import torch  # noqa: E402
 
 from isaaclab_tasks.utils import parse_env_cfg  # noqa: E402
@@ -45,7 +46,7 @@ from cg_isaac_envs.policies import ScriptedHouseholdPolicy  # noqa: E402
 def _ffmpeg(path: Path, width: int, height: int):
     return subprocess.Popen(
         [
-            "ffmpeg", "-y", "-loglevel", "error", "-f", "rawvideo",
+            imageio_ffmpeg.get_ffmpeg_exe(), "-y", "-loglevel", "error", "-f", "rawvideo",
             "-pixel_format", "rgb24", "-video_size", f"{width}x{height}",
             "-framerate", str(args.fps), "-i", "-", "-an", "-c:v", "libx264",
             "-preset", "medium", "-crf", "18", "-pix_fmt", "yuv420p", str(path),

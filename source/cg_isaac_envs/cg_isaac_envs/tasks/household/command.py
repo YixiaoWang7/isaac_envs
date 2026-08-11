@@ -21,6 +21,7 @@ class HouseholdTaskCommand(CommandTerm):
         self.prompt_tokens = torch.zeros(env.num_envs, cfg.max_prompt_tokens, dtype=torch.long, device=env.device)
         self._episode_number = torch.zeros(env.num_envs, dtype=torch.long, device=env.device)
         self._fixed_task_ids = torch.full_like(self.task_ids, -1)
+        self.handle_lifted = torch.zeros(env.num_envs, dtype=torch.bool, device=env.device)
         self._pool = torch.tensor(split_task_ids(cfg.task_split), dtype=torch.long, device=env.device)
         super().__init__(cfg, env)
 
@@ -54,6 +55,7 @@ class HouseholdTaskCommand(CommandTerm):
         fixed = self._fixed_task_ids[env_ids] >= 0
         sampled[fixed] = self._fixed_task_ids[env_ids][fixed]
         self.task_ids[env_ids] = sampled
+        self.handle_lifted[env_ids] = False
         self.prompt_variant_ids[env_ids] = self._episode_number[env_ids] % 2
         self._episode_number[env_ids] += 1
         self._encode(env_ids)

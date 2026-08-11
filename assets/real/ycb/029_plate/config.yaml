@@ -1,5 +1,5 @@
-asset_path: /home/yixiao/Documents/code/cg/isaac_envs/assets/real/ycb/029_plate/textured_full.glb
-usd_dir: /home/yixiao/Documents/code/cg/isaac_envs/assets/real/ycb/029_plate
+asset_path: textured_full.glb
+usd_dir: .
 usd_file_name: plate.usd
 force_usd_conversion: true
 make_instanceable: false

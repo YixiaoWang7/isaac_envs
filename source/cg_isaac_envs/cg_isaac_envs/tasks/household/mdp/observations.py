@@ -65,3 +65,7 @@ def stages(env):
 
 def front_rgb(env):
     return env.scene["front_camera"].data.output["rgb"][..., :3].float()
+
+
+def wrist_rgb(env):
+    return env.scene["wrist_camera"].data.output["rgb"][..., :3].float()

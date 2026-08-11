@@ -27,36 +27,76 @@ from isaaclab_assets.robots.franka import FRANKA_PANDA_HIGH_PD_CFG
 from . import mdp
 from .command import HouseholdTaskCommandCfg
 
-ASSET_DIR = Path(__file__).resolve().parents[5] / "assets" / "real" / "ycb"
+PROCEDURAL_DIR = Path(__file__).resolve().parents[5] / "assets" / "procedural"
 
 
-def dynamic_usd(path: str, scale=(1.0, 1.0, 1.0)) -> sim_utils.UsdFileCfg:
+def graspable_material() -> sim_utils.RigidBodyMaterialCfg:
+    return sim_utils.RigidBodyMaterialCfg(
+        friction_combine_mode="max",
+        restitution_combine_mode="min",
+        static_friction=1.80,
+        dynamic_friction=1.50,
+        restitution=0.0,
+    )
+
+
+def dynamic_usd(path: str, scale=(1.0, 1.0, 1.0), color=None, mass=0.025) -> sim_utils.UsdFileCfg:
     return sim_utils.UsdFileCfg(
         usd_path=path,
         scale=scale,
         rigid_props=sim_utils.RigidBodyPropertiesCfg(
-            solver_position_iteration_count=16,
-            solver_velocity_iteration_count=2,
-            max_depenetration_velocity=2.0,
+            solver_position_iteration_count=24,
+            solver_velocity_iteration_count=4,
+            max_depenetration_velocity=0.5,
+            linear_damping=0.08,
+            angular_damping=0.12,
             disable_gravity=False,
         ),
-        collision_props=sim_utils.CollisionPropertiesCfg(contact_offset=0.003, rest_offset=0.0),
-        mass_props=sim_utils.MassPropertiesCfg(mass=0.12),
+        collision_props=sim_utils.CollisionPropertiesCfg(contact_offset=0.002, rest_offset=0.0),
+        mass_props=sim_utils.MassPropertiesCfg(mass=mass),
+        visual_material=(sim_utils.PreviewSurfaceCfg(diffuse_color=color, roughness=0.65) if color else None),
     )
 
 
-def fixed_bin(path: str, scale) -> sim_utils.UsdFileCfg:
-    return sim_utils.UsdFileCfg(
-        usd_path=path,
-        scale=scale,
-        rigid_props=sim_utils.RigidBodyPropertiesCfg(kinematic_enabled=True),
-        collision_props=sim_utils.CollisionPropertiesCfg(contact_offset=0.003),
+def candy_cube(color) -> sim_utils.CuboidCfg:
+    return sim_utils.CuboidCfg(
+        size=(0.020, 0.020, 0.020),
+        rigid_props=sim_utils.RigidBodyPropertiesCfg(
+            solver_position_iteration_count=32,
+            solver_velocity_iteration_count=8,
+            max_depenetration_velocity=0.08,
+            linear_damping=0.15,
+            angular_damping=0.20,
+            disable_gravity=False,
+        ),
+        collision_props=sim_utils.CollisionPropertiesCfg(contact_offset=0.0005, rest_offset=0.0),
+        mass_props=sim_utils.MassPropertiesCfg(mass=0.012),
+        physics_material=graspable_material(),
+        visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=color, roughness=0.65),
     )
 
 
 @configclass
 class HouseholdSceneCfg(InteractiveSceneCfg):
     robot = FRANKA_PANDA_HIGH_PD_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
+    # The stock high-PD hand is very stiff (200 N effort limit), which can
+    # eject small objects.  A compliant, force-limited hand closes around both
+    # the 20 mm cubes and thin mug handles without generating a large impulse.
+    robot.actuators["panda_hand"].effort_limit_sim = 15.0
+    robot.actuators["panda_hand"].stiffness = 350.0
+    robot.actuators["panda_hand"].damping = 45.0
+    # Same reachable home position as the stock Franka pose, with the tool
+    # optical axis straight down and zero world yaw.
+    robot.init_state.joint_pos = {
+        "panda_joint1": -0.0089,
+        "panda_joint2": -0.5296,
+        "panda_joint3": 0.0210,
+        "panda_joint4": -2.9649,
+        "panda_joint5": 0.0163,
+        "panda_joint6": 2.4354,
+        "panda_joint7": 0.7822,
+        "panda_finger_joint.*": 0.04,
+    }
 
     table = AssetBaseCfg(
         prim_path="{ENV_REGEX_NS}/Table",
@@ -75,51 +115,53 @@ class HouseholdSceneCfg(InteractiveSceneCfg):
         spawn=sim_utils.DomeLightCfg(color=(0.78, 0.80, 0.84), intensity=1200.0),
     )
 
-    bowl = RigidObjectCfg(
-        prim_path="{ENV_REGEX_NS}/Bowl", init_state=RigidObjectCfg.InitialStateCfg(pos=(0.38, -0.18, 0.030)),
-        spawn=dynamic_usd(str(ASSET_DIR / "024_bowl" / "bowl.usd"), (0.75, 0.75, 0.75)),
+    red_candy = RigidObjectCfg(
+        prim_path="{ENV_REGEX_NS}/RedCandy", init_state=RigidObjectCfg.InitialStateCfg(pos=(0.30, -0.13, 0.011)),
+        spawn=candy_cube((0.85, 0.04, 0.04)),
     )
-    plate = RigidObjectCfg(
-        prim_path="{ENV_REGEX_NS}/Plate", init_state=RigidObjectCfg.InitialStateCfg(pos=(0.38, 0.0, 0.020)),
-        spawn=dynamic_usd(str(ASSET_DIR / "029_plate" / "plate.usd"), (0.55, 0.55, 0.55)),
+    blue_candy = RigidObjectCfg(
+        prim_path="{ENV_REGEX_NS}/BlueCandy", init_state=RigidObjectCfg.InitialStateCfg(pos=(0.30, 0.0, 0.011)),
+        spawn=candy_cube((0.04, 0.18, 0.90)),
     )
-    serving_pan = RigidObjectCfg(
-        prim_path="{ENV_REGEX_NS}/ServingPan", init_state=RigidObjectCfg.InitialStateCfg(pos=(0.38, 0.19, 0.035)),
-        spawn=dynamic_usd(str(ASSET_DIR / "027_skillet" / "serving_pan.usd"), (0.60, 0.60, 0.60)),
+    green_candy = RigidObjectCfg(
+        prim_path="{ENV_REGEX_NS}/GreenCandy", init_state=RigidObjectCfg.InitialStateCfg(pos=(0.30, 0.13, 0.011)),
+        spawn=candy_cube((0.04, 0.72, 0.18)),
     )
-    apple = RigidObjectCfg(
-        prim_path="{ENV_REGEX_NS}/Apple", init_state=RigidObjectCfg.InitialStateCfg(pos=(0.53, -0.16, 0.040)),
-        spawn=dynamic_usd(str(ASSET_DIR / "013_apple" / "apple.usd"), (0.80, 0.80, 0.80)),
+    mug_a = RigidObjectCfg(
+        prim_path="{ENV_REGEX_NS}/MugA", init_state=RigidObjectCfg.InitialStateCfg(pos=(0.44, -0.15, 0.003)),
+        spawn=dynamic_usd(str(PROCEDURAL_DIR / "manipulation_mug.usd"), color=(0.92, 0.92, 0.94), mass=0.025),
     )
-    banana = RigidObjectCfg(
-        prim_path="{ENV_REGEX_NS}/Banana", init_state=RigidObjectCfg.InitialStateCfg(pos=(0.53, 0.0, 0.025)),
-        spawn=dynamic_usd(str(ASSET_DIR / "011_banana" / "banana.usd"), (0.70, 0.70, 0.70)),
+    mug_b = RigidObjectCfg(
+        prim_path="{ENV_REGEX_NS}/MugB", init_state=RigidObjectCfg.InitialStateCfg(pos=(0.44, 0.0, 0.003)),
+        spawn=dynamic_usd(str(PROCEDURAL_DIR / "manipulation_mug.usd"), color=(0.10, 0.55, 0.90), mass=0.025),
     )
-    snack_package = RigidObjectCfg(
-        prim_path="{ENV_REGEX_NS}/SnackPackage", init_state=RigidObjectCfg.InitialStateCfg(pos=(0.53, 0.16, 0.030)),
-        spawn=dynamic_usd(str(ASSET_DIR / "008_pudding_box" / "candy_package.usd"), (0.55, 0.55, 0.55)),
+    mug_c = RigidObjectCfg(
+        prim_path="{ENV_REGEX_NS}/MugC", init_state=RigidObjectCfg.InitialStateCfg(pos=(0.44, 0.15, 0.003)),
+        spawn=dynamic_usd(str(PROCEDURAL_DIR / "manipulation_mug.usd"), color=(0.90, 0.12, 0.08), mass=0.025),
     )
 
-    left_place = RigidObjectCfg(
-        prim_path="{ENV_REGEX_NS}/LeftPlace", init_state=RigidObjectCfg.InitialStateCfg(pos=(0.69, -0.25, 0.006)),
-        spawn=sim_utils.CylinderCfg(radius=0.085, height=0.009,
-            visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.48, 0.28, 0.12), roughness=0.9),
+    hot_serving_place = RigidObjectCfg(
+        prim_path="{ENV_REGEX_NS}/HotServingPlace", init_state=RigidObjectCfg.InitialStateCfg(pos=(0.60, -0.22, 0.0005)),
+        # All destination footprints are approximately 0.018 m^2.
+        # These are flush visual markers; the table supports placed objects.
+        spawn=sim_utils.CylinderCfg(radius=0.076, height=0.001,
+            visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.90, 0.12, 0.04), emissive_color=(0.25, 0.02, 0.0), roughness=0.9),
             collision_props=None, rigid_props=sim_utils.RigidBodyPropertiesCfg(kinematic_enabled=True)),
     )
-    right_place = RigidObjectCfg(
-        prim_path="{ENV_REGEX_NS}/RightPlace", init_state=RigidObjectCfg.InitialStateCfg(pos=(0.69, 0.25, 0.006)),
-        spawn=sim_utils.CylinderCfg(radius=0.085, height=0.009,
-            visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.36, 0.18, 0.08), roughness=0.9),
+    cold_serving_place = RigidObjectCfg(
+        prim_path="{ENV_REGEX_NS}/ColdServingPlace", init_state=RigidObjectCfg.InitialStateCfg(pos=(0.60, 0.22, 0.0005)),
+        spawn=sim_utils.CuboidCfg(size=(0.134, 0.134, 0.001),
+            visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.03, 0.30, 0.92), roughness=0.9),
             collision_props=None, rigid_props=sim_utils.RigidBodyPropertiesCfg(kinematic_enabled=True)),
     )
-    packing_place = RigidObjectCfg(
-        prim_path="{ENV_REGEX_NS}/PackingPlace", init_state=RigidObjectCfg.InitialStateCfg(pos=(0.72, 0.0, 0.018)),
+    storage_place = RigidObjectCfg(
+        prim_path="{ENV_REGEX_NS}/StoragePlace", init_state=RigidObjectCfg.InitialStateCfg(pos=(0.64, 0.0, 0.0005)),
         spawn=sim_utils.CuboidCfg(
-            size=(0.24, 0.18, 0.014),
+            size=(0.18, 0.10, 0.001),
             visual_material=sim_utils.PreviewSurfaceCfg(
-                diffuse_color=(0.36, 0.16, 0.055), roughness=0.72
+                diffuse_color=(0.12, 0.70, 0.20), roughness=0.72
             ),
-            collision_props=sim_utils.CollisionPropertiesCfg(),
+            collision_props=None,
             rigid_props=sim_utils.RigidBodyPropertiesCfg(kinematic_enabled=True),
         ),
     )
@@ -189,6 +231,7 @@ class VisionObservationsCfg(ObservationsCfg):
     @configclass
     class VisionPolicyCfg(ObservationsCfg.PolicyCfg):
         front_rgb = ObsTerm(func=mdp.front_rgb)
+        wrist_rgb = ObsTerm(func=mdp.wrist_rgb)
 
     policy: VisionPolicyCfg = VisionPolicyCfg()
 
@@ -224,16 +267,19 @@ class HouseholdEnvCfg(ManagerBasedRLEnvCfg):
     terminations: TerminationsCfg = TerminationsCfg()
 
     def __post_init__(self):
-        self.decimation = 2
+        self.decimation = 4
         self.episode_length_s = 45.0
-        self.sim.dt = 1.0 / 60.0
+        self.sim.dt = 1.0 / 120.0
         self.sim.render_interval = self.decimation
+        # Apply the high-friction, non-bouncy material globally so it also
+        # covers imported USD mugs and the Franka fingertips.
+        self.sim.physics_material = graspable_material()
         self.sim.physx.bounce_threshold_velocity = 0.2
         self.sim.physx.friction_correlation_distance = 0.00625
         self.viewer.origin_type = "env"
         self.viewer.env_index = 0
-        self.viewer.eye = (1.85, 0.0, 1.50)
-        self.viewer.lookat = (0.45, 0.0, 0.18)
+        self.viewer.eye = (1.15, 0.0, 0.95)
+        self.viewer.lookat = (0.48, 0.0, 0.03)
         self.viewer.resolution = (1280, 720)
 
 
@@ -250,11 +296,46 @@ class HouseholdVisionEnvCfg(HouseholdEnvCfg):
             width=256,
             data_types=["rgb"],
             spawn=sim_utils.PinholeCameraCfg(
-                focal_length=20.0, focus_distance=1.2, horizontal_aperture=24.0, clipping_range=(0.05, 3.0)
+                focal_length=24.0, focus_distance=1.15, horizontal_aperture=24.0, clipping_range=(0.05, 3.0)
             ),
             offset=CameraCfg.OffsetCfg(
-                pos=(1.45, 0.0, 0.82),
-                rot=(0.35355, -0.61237, -0.61237, 0.35355),
+                pos=(1.15, 0.0, 0.95),
+                rot=(0.218886, -0.672376, -0.672376, 0.218886),
+                convention="ros",
+            ),
+        )
+        self.scene.wrist_camera = CameraCfg(
+            prim_path="{ENV_REGEX_NS}/Robot/panda_hand/WristCamera",
+            update_period=0.0,
+            height=480,
+            width=640,
+            data_types=["rgb"],
+            spawn=sim_utils.PinholeCameraCfg(
+                focal_length=18.0, focus_distance=0.45, horizontal_aperture=24.0, clipping_range=(0.025, 2.0)
+            ),
+            # Mount the camera on the opposite side of the gripper body.  Its optical axis is
+            # nearly parallel to the fingers, with only a small inward tilt so
+            # the gripper remains visible without looking steeply at its tip.
+            offset=CameraCfg.OffsetCfg(
+                pos=(0.05, 0.0, 0.0),
+                rot=(0.703666, -0.069677, -0.069677, 0.703666),
+                convention="ros",
+            ),
+        )
+        self.scene.side_camera = CameraCfg(
+            prim_path="{ENV_REGEX_NS}/SideCamera",
+            update_period=0.0,
+            height=480,
+            width=640,
+            data_types=["rgb"],
+            spawn=sim_utils.PinholeCameraCfg(
+                focal_length=24.0, focus_distance=1.10, horizontal_aperture=24.0, clipping_range=(0.05, 3.0)
+            ),
+            # Robot-right view (negative world Y), aimed across and slightly
+            # downward at the tabletop manipulation area.
+            offset=CameraCfg.OffsetCfg(
+                pos=(0.50, -0.95, 0.62),
+                rot=(0.489, -0.872, 0.0, 0.0),
                 convention="ros",
             ),
         )

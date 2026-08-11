@@ -8,15 +8,15 @@ import isaaclab.utils.math as math_utils
 from ..task_catalog import OBJECT_NAMES, STAGE_NAMES, TASK_BY_ID
 
 GEOMETRY = {
-    "bowl": (0.061, 0.061, 0.042),
-    "plate": (0.071, 0.071, 0.015),
-    "serving_pan": (0.080, 0.133, 0.085),
-    "apple": (0.031, 0.031, 0.058),
-    "banana": (0.039, 0.063, 0.026),
-    "snack_package": (0.038, 0.035, 0.022),
-    "left_place": (0.085, 0.085, 0.012),
-    "right_place": (0.085, 0.085, 0.012),
-    "packing_place": (0.120, 0.090, 0.025),
+    "red_candy": (0.018, 0.018, 0.018),
+    "blue_candy": (0.018, 0.018, 0.018),
+    "green_candy": (0.018, 0.018, 0.018),
+    "mug_a": (0.042, 0.042, 0.080),
+    "mug_b": (0.042, 0.042, 0.080),
+    "mug_c": (0.042, 0.042, 0.080),
+    "hot_serving_place": (0.085, 0.085, 0.012),
+    "cold_serving_place": (0.085, 0.085, 0.012),
+    "storage_place": (0.120, 0.090, 0.025),
 }
 
 
@@ -68,6 +68,29 @@ def upright(env, subject: str) -> torch.Tensor:
     return world_z[:, 2] > 0.94
 
 
+def handle_lift(env, subject: str) -> torch.Tensor:
+    """Latch a mug lift performed while the fingers occupy its handle region."""
+    command = task_term(env)
+    mug = env.scene[subject]
+    robot = env.scene["robot"]
+    finger_ids, _ = robot.find_bodies(["panda_leftfinger", "panda_rightfinger"])
+    finger_midpoint = robot.data.body_pos_w[:, finger_ids].mean(dim=1)
+    relative_fingers = math_utils.quat_apply_inverse(
+        mug.data.root_quat_w, finger_midpoint - mug.data.root_pos_w
+    )
+    radial_distance = torch.linalg.vector_norm(relative_fingers[:, :2], dim=1)
+    mug_height = GEOMETRY[subject][2]
+    fingers_at_handle = (
+        (radial_distance > 0.050)
+        & (radial_distance < 0.115)
+        & (relative_fingers[:, 2] > 0.005)
+        & (relative_fingers[:, 2] < mug_height + 0.025)
+    )
+    lifted = mug.data.root_pos_w[:, 2] > 0.080
+    command.handle_lifted |= fingers_at_handle & lifted
+    return command.handle_lifted
+
+
 def relation_value(env, subject: str, relation: str, target: str) -> torch.Tensor:
     if relation == "inside":
         return inside(env, subject, target)
@@ -79,6 +102,8 @@ def relation_value(env, subject: str, relation: str, target: str) -> torch.Tenso
         return beside(env, subject, target)
     if relation == "upright":
         return upright(env, subject)
+    if relation == "handle_lift":
+        return handle_lift(env, subject)
     raise KeyError(relation)
 
 

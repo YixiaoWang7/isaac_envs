@@ -1,5 +1,5 @@
-asset_path: /home/yixiao/Documents/code/cg/isaac_envs/assets/real/ycb/008_pudding_box/textured_full.glb
-usd_dir: /home/yixiao/Documents/code/cg/isaac_envs/assets/real/ycb/008_pudding_box
+asset_path: textured_full.glb
+usd_dir: .
 usd_file_name: candy_package.usd
 force_usd_conversion: true
 make_instanceable: false

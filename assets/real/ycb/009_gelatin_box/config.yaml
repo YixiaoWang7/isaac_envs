@@ -1,5 +1,5 @@
-asset_path: /home/yixiao/Documents/code/cg/isaac_envs/assets/real/ycb/009_gelatin_box/textured.glb
-usd_dir: /home/yixiao/Documents/code/cg/isaac_envs/assets/real/ycb/009_gelatin_box
+asset_path: textured.glb
+usd_dir: .
 usd_file_name: tea_package.usd
 force_usd_conversion: true
 make_instanceable: false

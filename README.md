@@ -26,34 +26,121 @@ python scripts/list_envs.py
 
 ## Tasks
 
-The generated catalog has 36 semantic tasks across tea, candy, combined service, and takeaway families. Each semantic
-task has two prompt variants. Candy prompts deliberately leave the serving container unspecified; mug and bowl are
-both valid, but all requested candies must use the same selected container. Named `orthogonal_train`, `id_eval`, and
-`ood_recombination` splits are available through the task command configuration.
+The household catalog contains `3 × 3 × 3 = 27` tasks. A task selects one colored cube, one mug, and one destination
+station. Each task has two prompt variants, while successful-demo quotas are balanced by task ID.
 
 State and vision environment IDs:
 
 ```text
-Isaac-CG-DeskService-Franka-IK-Rel-v0
-Isaac-CG-DeskService-Franka-IK-Rel-Vision-v0
+Isaac-CG-Household-Franka-IK-Rel-v0
+Isaac-CG-Household-Franka-IK-Rel-Vision-v0
 ```
 
 ## Teleoperation and recording
 
-SpaceMouse provides six relative end-effector axes plus its left-button gripper toggle. Its right button resets the
-episode. Keyboard is available as a fallback.
+### Prepare the terminal
+
+Teleoperation is graphical. Run it from the logged-in desktop session and do not pass `--headless`. Activate the
+installed IsaacLab environment and use a writable temporary directory:
+
+```bash
+cd ~/code/cg/isaac_envs
+source ../env_isaaclab/bin/activate
+mkdir -p ../.isaaclab_tmp
+export TMPDIR="$(realpath ../.isaaclab_tmp)"
+```
+
+The custom extension must already be installed in this environment:
+
+```bash
+python -m pip install -e source/cg_isaac_envs
+```
+
+### SpaceMouse setup
+
+The default `hid` backend uses `pyspacemouse` and automatically searches the readable `/dev/hidraw*` interfaces:
 
 ```bash
 python scripts/teleop.py --teleop-device spacemouse
-python scripts/teleop.py --teleop-device keyboard --task-id 0
-python scripts/record_demos.py --enable-cameras --teleop-device spacemouse \
-  --dataset-file datasets/desk_service.hdf5 --num-demos 20
-python scripts/inspect_dataset.py datasets/desk_service.hdf5
 ```
 
-Only demonstrations satisfying the complete goal for ten consecutive steps are exported. Datasets include simulator
-state, policy observations, raw and processed actions, task ID, prompt variant/tokens, factor encoding, stage progress,
-seed, and catalog metadata.
+The tested Linux input-event backend can instead use the known event node explicitly:
+
+```bash
+python scripts/teleop.py \
+  --teleop-device spacemouse \
+  --spacemouse-backend input \
+  --spacemouse-device /dev/input/event4
+```
+
+Input-event numbers can change after reconnecting the device or rebooting. Check the current nodes and stable symlinks
+before launching:
+
+```bash
+ls -l /dev/input/event* /dev/input/by-id/*3Dconnexion* 2>/dev/null
+```
+
+The selected device must be readable by the current user. If opening it reports `Permission denied`, configure a
+device-specific udev rule or add the user to the machine's input-device access group, then log out and back in. Do not
+run Isaac Sim permanently with `sudo`.
+
+SpaceMouse controls:
+
+- Translation of the cap commands relative end-effector translation.
+- Twist commands yaw. Roll and pitch remain locked to the straight-down gripper orientation.
+- Button 1 toggles the persistent gripper target between open and closed.
+- During data collection, a reset task first enters `READY` mode so the prompt and scene can be inspected. Button 2
+  starts recording from `READY`. While `RECORDING`, button 2 discards the entire attempt, resets the same task, and
+  returns to `READY`; press it again when prepared to start the replacement attempt.
+- `--sensitivity VALUE` scales translation and rotation speed; the default is `1.0`.
+
+The main viewport shows the front camera. Separate wrist and robot-right side windows open at the same time. The active
+task prompt is printed in the terminal; the recording script also shows it in an Isaac UI progress panel.
+
+To launch a fixed task, use a task ID from `0` through `26`:
+
+```bash
+python scripts/teleop.py --teleop-device spacemouse --task-id 0
+```
+
+Keyboard is available as a fallback:
+
+```bash
+python scripts/teleop.py --teleop-device keyboard --task-id 0
+```
+
+### Balanced demonstration collection
+
+Supply both the dataset directory and the desired number of successful demonstrations per task. The recommended HID
+backend uses the same SpaceMouse setup as interactive teleoperation:
+
+```bash
+python scripts/record_demos.py \
+  --teleop-device spacemouse \
+  --spacemouse-backend hid \
+  --dataset-dir datasets/household_20_each \
+  --demos-per-task 20 \
+  --seed 1001
+```
+
+If raw HID is unavailable but the Linux event interface has been verified, replace `--spacemouse-backend hid` with
+`--spacemouse-backend input --spacemouse-device /dev/input/event4` (using the current event node).
+
+Only demonstrations satisfying the complete goal for ten consecutive stable steps are exported. Each HDF5 timestep
+contains the robot-base end-effector pose, measured gripper width, processed six-axis IK delta, absolute binary gripper
+target, and post-action success flags. Three synchronized 256 px MP4 files contain the front, wrist, and side views.
+The collector balances successful episodes across task IDs and safely resumes an incomplete compatible dataset. Its
+gripper action is a step-function target (`0 = closed`, `1 = open`), not a delta.
+
+Use a different `--seed` with a different dataset directory to collect another independent layout sequence. Reuse the
+original seed when resuming an existing dataset; the collector rejects a mismatched seed to prevent accidental mixing.
+
+Successful episodes are stored in `dataset.hdf5`, with three corresponding MP4 files under `videos/`. Operator-reset,
+dropped-object, and interrupted attempts are removed rather than added to the dataset. Inspect a collection with:
+
+```bash
+python scripts/inspect_dataset.py datasets/household_20_each/dataset.hdf5
+```
 
 ## Evaluation
 

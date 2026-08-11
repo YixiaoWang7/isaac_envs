@@ -1,5 +1,5 @@
-asset_path: /home/yixiao/Documents/code/cg/isaac_envs/assets/real/ycb/031_spoon/textured.glb
-usd_dir: /home/yixiao/Documents/code/cg/isaac_envs/assets/real/ycb/031_spoon
+asset_path: textured.glb
+usd_dir: .
 usd_file_name: spoon.usd
 force_usd_conversion: true
 make_instanceable: false
