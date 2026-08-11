@@ -2,6 +2,11 @@
 
 import argparse
 
+from runtime_setup import configure_private_tmpdir
+
+
+configure_private_tmpdir()
+
 from isaaclab.app import AppLauncher
 
 parser = argparse.ArgumentParser()
@@ -30,7 +35,7 @@ parser.add_argument(
     "--success-hold-seconds",
     type=float,
     default=1.0,
-    help="Seconds the completed, released, stable scene must remain valid",
+    help="Seconds all three success conditions must remain valid",
 )
 parser.add_argument("--seed", type=int, default=0, help="Reproducible household layout randomization seed")
 AppLauncher.add_app_launcher_args(parser)
@@ -58,7 +63,7 @@ from cg_isaac_envs.data_collection import (  # noqa: E402
     EpisodeMetadata,
 )
 from cg_isaac_envs.devices import LinuxSpaceMouse, RawHidSpaceMouse  # noqa: E402
-from cg_isaac_envs.tasks.household.mdp.relations import alternative_results, relation_value  # noqa: E402
+from cg_isaac_envs.tasks.household.mdp.relations import relation_value  # noqa: E402
 from cg_isaac_envs.tasks.household.mdp.terminations import required_object_dropped  # noqa: E402
 from cg_isaac_envs.tasks.household.task_catalog import (  # noqa: E402
     CATALOG,
@@ -70,7 +75,7 @@ from cg_isaac_envs.tasks.household.task_catalog import (  # noqa: E402
 
 CAMERA_SCENE_NAMES = {"front": "front_camera", "wrist": "wrist_camera", "side": "side_camera"}
 COLLECTION_FPS = 30
-GRIPPER_RELEASE_WIDTH_M = 0.06
+EE_HEIGHT_ABOVE_MUG_M = 0.15
 
 
 class PromptPanel:
@@ -184,7 +189,7 @@ def main():
         resolution=(256, 256),
         collection_seed=args.seed,
         success_hold_seconds=args.success_hold_seconds,
-        gripper_release_width_m=GRIPPER_RELEASE_WIDTH_M,
+        ee_height_above_mug_m=EE_HEIGHT_ABOVE_MUG_M,
         collection_task_ids=collection_task_ids,
     )
     required_success_steps = max(1, round(args.success_hold_seconds * dataset.fps))
@@ -354,49 +359,39 @@ def main():
                 env.step(action[None, :])
                 ee_delta_pose = arm_term.processed_actions[0].detach().cpu().numpy()
                 gripper_target = int(action[6].item() > 0.0)
-                gripper_width_after = float(robot.data.joint_pos[0, finger_joint_ids].sum().item())
-                gripper_released = (
-                    gripper_target == 1 and gripper_width_after >= GRIPPER_RELEASE_WIDTH_M
-                )
                 current_task = TASK_BY_ID[current_task_id]
-                goal_states = [
-                    (
-                        goal,
-                        bool(relation_value(env, goal.subject, goal.relation, goal.target)[0])
-                    )
-                    for goal in current_task.alternatives[0]
-                ]
-                task_success = bool(alternative_results(env)[0][0])
-                required_object_speeds = torch.stack(
-                    [
-                        torch.linalg.vector_norm(env.scene[name].data.root_lin_vel_w[0])
-                        for name in current_task.manipulation_subjects
-                    ]
+                cube_inside_mug = bool(
+                    relation_value(
+                        env,
+                        current_task.selected_object,
+                        "inside",
+                        current_task.associated_object,
+                    )[0]
                 )
-                required_objects_stable = bool(required_object_speeds.amax() < 0.08)
-                stable_now = task_success and gripper_released and required_objects_stable
-                success_steps = success_steps + 1 if stable_now else 0
-                stable_success = success_steps >= required_success_steps
+                mug_on_station = bool(
+                    relation_value(
+                        env,
+                        current_task.associated_object,
+                        "on",
+                        current_task.destination,
+                    )[0]
+                )
+                ee_height_above_mug = (
+                    env.scene["ee_frame"].data.target_pos_w[0, 0, 2]
+                    - env.scene[current_task.associated_object].data.root_pos_w[0, 2]
+                )
+                end_effector_high = bool(ee_height_above_mug >= EE_HEIGHT_ABOVE_MUG_M)
+                success_now = cube_inside_mug and mug_on_station and end_effector_high
+                success_steps = success_steps + 1 if success_now else 0
+                success_held = success_steps >= required_success_steps
 
-                failed_goal = next(
-                    (
-                        goal
-                        for goal, value in goal_states
-                        if (goal.required and not value) or (not goal.required and value)
-                    ),
-                    None,
-                )
-                if failed_goal is not None and failed_goal.relation == "inside":
+                if not cube_inside_mug:
                     update_panel("WAITING — selected cube is not inside the target mug")
-                elif failed_goal is not None and failed_goal.relation == "on":
+                elif not mug_on_station:
                     update_panel("WAITING — target mug is not on its station")
-                elif failed_goal is not None and failed_goal.relation == "handle_lift":
-                    update_panel("WAITING — lift the hot-station mug by its handle")
-                elif task_success and not gripper_released:
-                    update_panel("PLACE COMPLETE — open the gripper and release the mug")
-                elif task_success and not required_objects_stable:
-                    update_panel("RELEASED — wait for the cube and mug to stop moving")
-                elif stable_now:
+                elif not end_effector_high:
+                    update_panel("WAITING — raise the end effector above the target mug")
+                elif success_now:
                     update_panel(f"VERIFYING SUCCESS {success_steps}/{required_success_steps}")
                 else:
                     update_panel("RECORDING")
@@ -407,10 +402,10 @@ def main():
                     gripper_width=gripper_width,
                     ee_delta_pose=ee_delta_pose,
                     gripper_target=gripper_target,
-                    task_success=task_success,
-                    gripper_released=gripper_released,
-                    required_objects_stable=required_objects_stable,
-                    stable_success=stable_success,
+                    cube_inside_mug=cube_inside_mug,
+                    mug_on_station=mug_on_station,
+                    end_effector_high=end_effector_high,
+                    success_held=success_held,
                 )
 
                 if reset_requested:
@@ -419,7 +414,7 @@ def main():
                 elif bool(required_object_dropped(env)[0]):
                     print(f"Discarded task {current_task_id:02d} attempt (required object dropped).")
                     reset_current_task()
-                elif stable_success:
+                elif success_held:
                     demo_name = attempt.commit()
                     scheduler.mark_success(current_task_id)
                     print(
@@ -447,5 +442,8 @@ def main():
 if __name__ == "__main__":
     try:
         main()
+    except Exception as error:
+        print(f"Collector startup failed: {error}", flush=True)
+        raise
     finally:
         simulation_app.close()

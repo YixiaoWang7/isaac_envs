@@ -157,16 +157,17 @@ If raw HID is unavailable but the Linux event interface has been verified, repla
 `--spacemouse-backend input --spacemouse-device /dev/input/event4` (using the current event node).
 
 The collector completes the requested quota for the current selected task before showing the next selected task, and
-continues in the requested task-code order. A success requires the task relations to be complete, the gripper to be
-open with the mug released, and the selected cube and mug to be stationary. For the red hot station, the mug must also
-have been lifted by its handle. These conditions must remain true for one continuous second (30 control steps by
-default); if any becomes false, the timer restarts. The collection panel reports what is still missing.
+continues in the requested task-code order. A success requires the selected cube to be inside the target mug, the target
+mug to be on its station, and the end-effector tool-tip to be at least 0.15 m above the target mug's center. These three
+conditions must remain true for one continuous second (30 control steps by default); if any becomes false, the timer
+restarts. The collection panel reports what is still missing.
 
 Each HDF5 timestep contains the robot-base end-effector pose, measured gripper width, processed six-axis IK delta,
-absolute binary gripper target, and post-action task/release/stability/success flags. Three synchronized 256 px MP4 files contain
-the front, wrist, and side views. The collector enforces equal successful-episode quotas across task IDs and safely
-resumes an incomplete compatible dataset. Its gripper action is a step-function target (`0 = closed`, `1 = open`), not
-a delta. The verification duration can be changed with `--success-hold-seconds`, although one second is recommended.
+absolute binary gripper target, and post-action cube-in-mug, mug-on-station, end-effector-height, and held-success flags.
+Three synchronized 256 px MP4 files contain the front, wrist, and side views. The collector enforces equal
+successful-episode quotas across task IDs and safely resumes an incomplete compatible dataset. Its gripper action is a
+step-function target (`0 = closed`, `1 = open`), not a delta. The verification duration can be changed with
+`--success-hold-seconds`, although one second is recommended.
 
 Use a different `--seed` with a different dataset directory to collect another independent layout sequence. Reuse the
 original seed when resuming an existing dataset; the collector rejects a mismatched seed to prevent accidental mixing.

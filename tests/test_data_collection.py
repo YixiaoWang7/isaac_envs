@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 import cv2
@@ -39,7 +40,14 @@ def test_scheduler_finishes_one_task_before_advancing():
     assert scheduler.next_task() == 1
 
 
-def sample(attempt, stable=False, gripper=1, released=None, objects_stable=None):
+def sample(
+    attempt,
+    success_held=False,
+    gripper=1,
+    cube_inside_mug=None,
+    mug_on_station=None,
+    end_effector_high=None,
+):
     images = {
         camera: np.full((256, 256, 3), channel * 40, dtype=np.uint8)
         for channel, camera in enumerate(("front", "wrist", "side"), start=1)
@@ -50,18 +58,18 @@ def sample(attempt, stable=False, gripper=1, released=None, objects_stable=None)
         gripper_width=0.08 if gripper else 0.02,
         ee_delta_pose=np.array([0.01, 0.0, -0.005, 0.0, 0.0, 0.035]),
         gripper_target=gripper,
-        task_success=stable,
-        gripper_released=stable if released is None else released,
-        required_objects_stable=stable if objects_stable is None else objects_stable,
-        stable_success=stable,
+        cube_inside_mug=success_held if cube_inside_mug is None else cube_inside_mug,
+        mug_on_station=success_held if mug_on_station is None else mug_on_station,
+        end_effector_high=success_held if end_effector_high is None else end_effector_high,
+        success_held=success_held,
     )
 
 
 def test_success_commit_writes_synchronized_hdf5_and_mp4(tmp_path: Path):
     dataset = DemonstrationDataset(tmp_path, TASK_ROWS)
     attempt = dataset.new_attempt(EpisodeMetadata(1, (1, 1, 2), "task one", 0))
-    sample(attempt, stable=False, gripper=1)
-    sample(attempt, stable=True, gripper=1)
+    sample(attempt, success_held=False, gripper=1)
+    sample(attempt, success_held=True, gripper=1)
     assert attempt.commit() == "demo_000000"
     dataset.close()
 
@@ -71,9 +79,10 @@ def test_success_commit_writes_synchronized_hdf5_and_mp4(tmp_path: Path):
         assert episode["obs/gripper_width"].shape == (2, 1)
         assert episode["actions/ee_delta_pose"].shape == (2, 6)
         assert episode["actions/gripper_target"][:, 0].tolist() == [1, 1]
-        assert episode["signals/gripper_released_after_action"][:, 0].tolist() == [False, True]
-        assert episode["signals/required_objects_stable_after_action"][:, 0].tolist() == [False, True]
-        assert episode["signals/stable_success_after_action"][:, 0].tolist() == [False, True]
+        assert episode["signals/cube_inside_mug_after_action"][:, 0].tolist() == [False, True]
+        assert episode["signals/mug_on_station_after_action"][:, 0].tolist() == [False, True]
+        assert episode["signals/end_effector_high_after_action"][:, 0].tolist() == [False, True]
+        assert episode["signals/success_held_after_action"][:, 0].tolist() == [False, True]
         assert episode.attrs["task_id"] == 1
         assert stream["data"].attrs["total"] == 2
 
@@ -104,21 +113,47 @@ def test_discard_leaves_no_committed_artifacts(tmp_path: Path):
     dataset.close()
 
 
-def test_commit_requires_the_gripper_to_be_released(tmp_path: Path):
+def test_commit_requires_cube_inside_mug(tmp_path: Path):
     dataset = DemonstrationDataset(tmp_path, TASK_ROWS)
     attempt = dataset.new_attempt(EpisodeMetadata(0, (1, 1, 1), "task zero", 0))
-    sample(attempt, stable=True, gripper=0, released=False)
-    with pytest.raises(ValueError, match="released"):
+    sample(attempt, success_held=True, cube_inside_mug=False)
+    with pytest.raises(ValueError, match="three success criteria"):
         attempt.commit()
     attempt.discard()
     dataset.close()
 
 
-def test_commit_requires_required_objects_to_be_stable(tmp_path: Path):
+def test_commit_requires_mug_on_station(tmp_path: Path):
     dataset = DemonstrationDataset(tmp_path, TASK_ROWS)
     attempt = dataset.new_attempt(EpisodeMetadata(0, (1, 1, 1), "task zero", 0))
-    sample(attempt, stable=True, objects_stable=False)
-    with pytest.raises(ValueError, match="stable"):
+    sample(attempt, success_held=True, mug_on_station=False)
+    with pytest.raises(ValueError, match="three success criteria"):
+        attempt.commit()
+    attempt.discard()
+    dataset.close()
+
+
+def test_commit_requires_end_effector_high(tmp_path: Path):
+    dataset = DemonstrationDataset(tmp_path, TASK_ROWS)
+    attempt = dataset.new_attempt(EpisodeMetadata(0, (1, 1, 1), "task zero", 0))
+    sample(attempt, success_held=True, end_effector_high=False)
+    with pytest.raises(ValueError, match="three success criteria"):
+        attempt.commit()
+    attempt.discard()
+    dataset.close()
+
+
+def test_commit_requires_success_hold_duration(tmp_path: Path):
+    dataset = DemonstrationDataset(tmp_path, TASK_ROWS)
+    attempt = dataset.new_attempt(EpisodeMetadata(0, (1, 1, 1), "task zero", 0))
+    sample(
+        attempt,
+        success_held=False,
+        cube_inside_mug=True,
+        mug_on_station=True,
+        end_effector_high=True,
+    )
+    with pytest.raises(ValueError, match="required duration"):
         attempt.commit()
     attempt.discard()
     dataset.close()
@@ -143,6 +178,51 @@ def test_resume_rejects_a_different_success_hold_time(tmp_path: Path):
     dataset.close()
     with pytest.raises(ValueError, match="incompatible"):
         DemonstrationDataset(tmp_path, TASK_ROWS, success_hold_seconds=0.5)
+
+
+def test_empty_dataset_accepts_a_different_end_effector_height(tmp_path: Path):
+    dataset = DemonstrationDataset(tmp_path, TASK_ROWS, ee_height_above_mug_m=0.15)
+    dataset.close()
+    migrated = DemonstrationDataset(tmp_path, TASK_ROWS, ee_height_above_mug_m=0.20)
+    metadata = json.loads(migrated.data.attrs["collection_schema"])
+    assert metadata["ee_height_above_mug_m"] == 0.20
+    migrated.close()
+
+
+def test_committed_dataset_rejects_a_different_end_effector_height(tmp_path: Path):
+    dataset = DemonstrationDataset(tmp_path, TASK_ROWS, ee_height_above_mug_m=0.15)
+    attempt = dataset.new_attempt(EpisodeMetadata(0, (1, 1, 1), "task zero", 0))
+    sample(attempt, success_held=True)
+    attempt.commit()
+    dataset.close()
+    with pytest.raises(ValueError, match="incompatible"):
+        DemonstrationDataset(tmp_path, TASK_ROWS, ee_height_above_mug_m=0.20)
+
+
+def test_empty_dataset_migrates_success_definition(tmp_path: Path):
+    dataset = DemonstrationDataset(tmp_path, TASK_ROWS)
+    dataset.close()
+    with h5py.File(tmp_path / "dataset.hdf5", "a") as stream:
+        metadata = json.loads(stream["data"].attrs["collection_schema"])
+        metadata["success_criteria"] = [
+            "selected_cube_inside_target_mug",
+            "target_mug_on_target_station",
+            "end_effector_at_or_above_success_height",
+        ]
+        del metadata["ee_height_above_mug_m"]
+        metadata["success_ee_height_m"] = 0.20
+        stream["data"].attrs["collection_schema"] = json.dumps(metadata, sort_keys=True)
+
+    migrated = DemonstrationDataset(tmp_path, TASK_ROWS)
+    migrated_metadata = json.loads(migrated.data.attrs["collection_schema"])
+    assert migrated_metadata["success_criteria"] == [
+        "selected_cube_inside_target_mug",
+        "target_mug_on_station",
+        "end_effector_high_enough",
+    ]
+    assert migrated_metadata["ee_height_above_mug_m"] == 0.15
+    assert "success_ee_height_m" not in migrated_metadata
+    migrated.close()
 
 
 def test_resume_rejects_a_different_task_subset(tmp_path: Path):

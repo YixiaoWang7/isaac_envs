@@ -14,9 +14,15 @@ import h5py
 import numpy as np
 
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 CAMERA_NAMES = ("front", "wrist", "side")
 ACTION_ORDER = ("dx", "dy", "dz", "dRx", "dRy", "dRz", "gripper_target")
+SUCCESS_SCHEMA_KEYS = {
+    "success_criteria",
+    "success_ee_height_m",
+    "ee_height_above_mug_m",
+    "gripper_release_width_m",
+}
 
 
 def catalog_fingerprint(task_rows: list[dict]) -> str:
@@ -81,7 +87,7 @@ class DemonstrationDataset:
         resolution: tuple[int, int] = (256, 256),
         collection_seed: int = 0,
         success_hold_seconds: float = 1.0,
-        gripper_release_width_m: float = 0.06,
+        ee_height_above_mug_m: float = 0.15,
         collection_task_ids: list[int] | tuple[int, ...] | None = None,
     ):
         self.root = Path(dataset_dir).expanduser().resolve()
@@ -93,7 +99,7 @@ class DemonstrationDataset:
         self.task_rows = task_rows
         self.collection_seed = int(collection_seed)
         self.success_hold_seconds = float(success_hold_seconds)
-        self.gripper_release_width_m = float(gripper_release_width_m)
+        self.ee_height_above_mug_m = float(ee_height_above_mug_m)
         self.collection_task_ids = tuple(
             int(task_id) for task_id in (
                 collection_task_ids
@@ -133,17 +139,18 @@ class DemonstrationDataset:
             "translation_delta": "robot_base_meters",
             "gripper_target": {"closed": 0, "open": 1},
             "success_hold_seconds": self.success_hold_seconds,
-            "gripper_release_width_m": self.gripper_release_width_m,
+            "ee_height_above_mug_m": self.ee_height_above_mug_m,
             "success_criteria": [
-                "task_relations",
-                "gripper_released",
-                "required_objects_stable",
+                "selected_cube_inside_target_mug",
+                "target_mug_on_station",
+                "end_effector_high_enough",
             ],
             "action_order": list(ACTION_ORDER),
         }
 
     def _initialize_or_validate(self) -> None:
-        expected = json.dumps(self._metadata(), sort_keys=True)
+        expected_metadata = self._metadata()
+        expected = json.dumps(expected_metadata, sort_keys=True)
         existing = self.data.attrs.get("collection_schema")
         if existing is None:
             self.data.attrs["collection_schema"] = expected
@@ -156,13 +163,24 @@ class DemonstrationDataset:
             # committed demonstrations are never migrated implicitly.
             has_demos = any(name.startswith("demo_") for name in self.data)
             try:
-                existing_version = int(json.loads(existing)["schema_version"])
+                existing_metadata = json.loads(existing)
+                existing_version = int(existing_metadata["schema_version"])
             except (TypeError, ValueError, KeyError, json.JSONDecodeError):
+                existing_metadata = None
                 existing_version = SCHEMA_VERSION
+            only_success_definition_changed = False
+            if isinstance(existing_metadata, dict):
+                existing_without_success = {
+                    key: value for key, value in existing_metadata.items() if key not in SUCCESS_SCHEMA_KEYS
+                }
+                expected_without_success = {
+                    key: value for key, value in expected_metadata.items() if key not in SUCCESS_SCHEMA_KEYS
+                }
+                only_success_definition_changed = existing_without_success == expected_without_success
             if (
                 not has_demos
                 and int(self.data.attrs.get("total", 0)) == 0
-                and existing_version != SCHEMA_VERSION
+                and (existing_version != SCHEMA_VERSION or only_success_definition_changed)
             ):
                 self.data.attrs["collection_schema"] = expected
                 self.stream.flush()
@@ -236,10 +254,10 @@ class EpisodeAttempt:
             "gripper_width": [],
             "ee_delta_pose": [],
             "gripper_target": [],
-            "task_success": [],
-            "gripper_released": [],
-            "required_objects_stable": [],
-            "stable_success": [],
+            "cube_inside_mug": [],
+            "mug_on_station": [],
+            "end_effector_high": [],
+            "success_held": [],
             "time": [],
         }
         width, height = dataset.resolution
@@ -263,10 +281,10 @@ class EpisodeAttempt:
         gripper_width: float,
         ee_delta_pose: np.ndarray,
         gripper_target: int,
-        task_success: bool,
-        gripper_released: bool,
-        required_objects_stable: bool,
-        stable_success: bool,
+        cube_inside_mug: bool,
+        mug_on_station: bool,
+        end_effector_high: bool,
+        success_held: bool,
     ) -> None:
         if self.closed:
             raise RuntimeError("Attempt is already closed")
@@ -282,10 +300,10 @@ class EpisodeAttempt:
         self.buffers["gripper_width"].append(float(gripper_width))
         self.buffers["ee_delta_pose"].append(np.asarray(ee_delta_pose, dtype=np.float32).reshape(6))
         self.buffers["gripper_target"].append(gripper_target)
-        self.buffers["task_success"].append(task_success)
-        self.buffers["gripper_released"].append(gripper_released)
-        self.buffers["required_objects_stable"].append(required_objects_stable)
-        self.buffers["stable_success"].append(stable_success)
+        self.buffers["cube_inside_mug"].append(cube_inside_mug)
+        self.buffers["mug_on_station"].append(mug_on_station)
+        self.buffers["end_effector_high"].append(end_effector_high)
+        self.buffers["success_held"].append(success_held)
         self.buffers["time"].append(self.frames / self.dataset.fps)
         self.frames += 1
 
@@ -324,14 +342,14 @@ class EpisodeAttempt:
     def commit(self) -> str:
         if self.frames == 0:
             raise ValueError("Cannot commit an empty demonstration")
-        if not bool(self.buffers["stable_success"][-1]):
-            raise ValueError("Cannot commit an episode without terminal stable success")
+        if not bool(self.buffers["success_held"][-1]):
+            raise ValueError("Cannot commit an episode before success is held for the required duration")
         if not (
-            bool(self.buffers["task_success"][-1])
-            and bool(self.buffers["gripper_released"][-1])
-            and bool(self.buffers["required_objects_stable"][-1])
+            bool(self.buffers["cube_inside_mug"][-1])
+            and bool(self.buffers["mug_on_station"][-1])
+            and bool(self.buffers["end_effector_high"][-1])
         ):
-            raise ValueError("Cannot commit before the task is complete, released, and stable")
+            raise ValueError("Cannot commit before all three success criteria are satisfied")
         self._close_videos()
         try:
             self._validate_videos()
@@ -376,23 +394,23 @@ class EpisodeAttempt:
             )
             signals = group.create_group("signals")
             signals.create_dataset(
-                "task_success_after_action",
-                data=np.asarray(self.buffers["task_success"], dtype=np.bool_)[:, None],
+                "cube_inside_mug_after_action",
+                data=np.asarray(self.buffers["cube_inside_mug"], dtype=np.bool_)[:, None],
                 compression="gzip",
             )
             signals.create_dataset(
-                "gripper_released_after_action",
-                data=np.asarray(self.buffers["gripper_released"], dtype=np.bool_)[:, None],
+                "mug_on_station_after_action",
+                data=np.asarray(self.buffers["mug_on_station"], dtype=np.bool_)[:, None],
                 compression="gzip",
             )
             signals.create_dataset(
-                "required_objects_stable_after_action",
-                data=np.asarray(self.buffers["required_objects_stable"], dtype=np.bool_)[:, None],
+                "end_effector_high_after_action",
+                data=np.asarray(self.buffers["end_effector_high"], dtype=np.bool_)[:, None],
                 compression="gzip",
             )
             signals.create_dataset(
-                "stable_success_after_action",
-                data=np.asarray(self.buffers["stable_success"], dtype=np.bool_)[:, None],
+                "success_held_after_action",
+                data=np.asarray(self.buffers["success_held"], dtype=np.bool_)[:, None],
                 compression="gzip",
             )
             group.create_dataset("time", data=np.asarray(self.buffers["time"], dtype=np.float32), compression="gzip")
